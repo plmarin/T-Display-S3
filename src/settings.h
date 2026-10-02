@@ -12,8 +12,8 @@
 #define DEFAULT_CURRENCY    "usd"
 #define DEFAULT_REFRESH_S   60
 #define MIN_REFRESH_S       30    // CoinGecko free API rate limit
-#define DEFAULT_CYCLE_S     15    // Auto switch screens every N seconds (0 = off)
-#define MIN_CYCLE_S         5
+#define DEFAULT_CYCLE_S     0     // Auto switch screens every N seconds (0 = off)
+#define MIN_CYCLE_S         0
 
 #define CONFIG_FILE         "/xrp_config.json"
 
