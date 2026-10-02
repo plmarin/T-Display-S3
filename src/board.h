@@ -1,7 +1,7 @@
 #ifndef BOARD_H
 #define BOARD_H
 
-// LilyGo T-Display S3 (display pins live in TFT_eSPI Setup206_LilyGo_T_Display_S3.h)
+// LilyGo T-Display S3 (display pins are TFT_eSPI build flags in platformio.ini)
 #define PIN_BUTTON_1  0   // BOOT button
 #define PIN_BUTTON_2  14  // KEY button
 #define PIN_ENABLE5V  15  // Enables display power when running on battery

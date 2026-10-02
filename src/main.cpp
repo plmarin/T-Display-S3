@@ -18,13 +18,6 @@ OneButton button1(PIN_BUTTON_1);
 OneButton button2(PIN_BUTTON_2);
 
 static unsigned long lastDraw = 0;
-static unsigned long lastCycle = 0;
-
-static void nextScreen()
-{
-    displayNextScreen();
-    lastCycle = millis();
-}
 
 void setup()
 {
@@ -41,7 +34,7 @@ void setup()
     button1.attachDoubleClick(displayFlipRotation);
 
     button2.setPressMs(5 * SECOND_MS);
-    button2.attachClick(nextScreen);
+    button2.attachClick(displayNextScreen);
     button2.attachLongPressStart(reset_configuration);
 
     displayInit();
@@ -53,7 +46,6 @@ void setup()
 
     displayLoadingScreen("Obteniendo precio...");
     priceServiceBegin(Settings);
-    lastCycle = millis();
 }
 
 void loop()
@@ -63,9 +55,6 @@ void loop()
     wifiManagerProcess();
 
     unsigned long now = millis();
-    if (Settings.CycleSec > 0 && now - lastCycle >= Settings.CycleSec * SECOND_MS)
-        nextScreen();
-
     if (displayConsumeDirty() || now - lastDraw >= REDRAW_MS)
     {
         displayDraw();
