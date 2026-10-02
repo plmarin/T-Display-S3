@@ -107,7 +107,6 @@ src/
   media/fonts.h     fuente NotoSans Bold embebida
 platformio.ini      dependencias y configuración de TFT_eSPI para la T-Display S3 (pines, driver)
 3d_files/           caja imprimible en 3D (de NerdMiner)
-.github/workflows/  compilación automática en cada push; el firmware queda como artefacto descargable
 ```
 
 ## Dependencias
