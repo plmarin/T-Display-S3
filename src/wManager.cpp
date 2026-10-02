@@ -68,17 +68,12 @@ void init_WifiManager()
     snprintf(refreshValue, sizeof(refreshValue), "%d", Settings.RefreshSec);
     WiFiManagerParameter refresh_box("refresh", "Refresco del precio en segundos (min. 30)", refreshValue, 5);
 
-    char cycleValue[8];
-    snprintf(cycleValue, sizeof(cycleValue), "%d", Settings.CycleSec);
-    WiFiManagerParameter cycle_box("cycle", "Cambiar de pantalla cada N segundos (0 = no)", cycleValue, 4);
-
     WiFiManagerParameter tz_box("timezone", "Zona horaria (formato POSIX TZ)", Settings.Timezone, sizeof(Settings.Timezone) - 1);
     WiFiManagerParameter tz_help("<small>Peninsula: CET-1CEST,M3.5.0,M10.5.0/3<br>Canarias: WET0WEST,M3.5.0/1,M10.5.0<br>UTC: UTC0</small>");
 
     wm.addParameter(&header_html);
     wm.addParameter(&currency_box);
     wm.addParameter(&refresh_box);
-    wm.addParameter(&cycle_box);
     wm.addParameter(&tz_box);
     wm.addParameter(&tz_help);
 
@@ -98,7 +93,6 @@ void init_WifiManager()
     {
         strlcpy(Settings.Currency, currency_box.getValue(), sizeof(Settings.Currency));
         Settings.RefreshSec = atoi(refresh_box.getValue());
-        Settings.CycleSec = atoi(cycle_box.getValue());
         strlcpy(Settings.Timezone, tz_box.getValue(), sizeof(Settings.Timezone));
         sanitizeSettings(Settings);
         saveSettings(Settings);

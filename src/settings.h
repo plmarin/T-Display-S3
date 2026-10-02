@@ -12,8 +12,6 @@
 #define DEFAULT_CURRENCY    "usd"
 #define DEFAULT_REFRESH_S   60
 #define MIN_REFRESH_S       30    // CoinGecko free API rate limit
-#define DEFAULT_CYCLE_S     0     // Auto switch screens every N seconds (0 = off)
-#define MIN_CYCLE_S         0
 
 #define CONFIG_FILE         "/xrp_config.json"
 
@@ -22,7 +20,6 @@ struct TSettings
     char Timezone[48]{ DEFAULT_TIMEZONE };
     char Currency[8]{ DEFAULT_CURRENCY };   // CoinGecko vs_currency, lower case
     int RefreshSec{ DEFAULT_REFRESH_S };
-    int CycleSec{ DEFAULT_CYCLE_S };
 };
 
 extern TSettings Settings;

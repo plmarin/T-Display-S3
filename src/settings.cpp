@@ -35,11 +35,6 @@ void sanitizeSettings(TSettings &settings)
 
     if (settings.RefreshSec < MIN_REFRESH_S)
         settings.RefreshSec = MIN_REFRESH_S;
-
-    if (settings.CycleSec < 0)
-        settings.CycleSec = 0;
-    else if (settings.CycleSec > 0 && settings.CycleSec < MIN_CYCLE_S)
-        settings.CycleSec = MIN_CYCLE_S;
 }
 
 bool loadSettings(TSettings &settings)
@@ -66,11 +61,10 @@ bool loadSettings(TSettings &settings)
     strlcpy(settings.Timezone, json["timezone"] | DEFAULT_TIMEZONE, sizeof(settings.Timezone));
     strlcpy(settings.Currency, json["currency"] | DEFAULT_CURRENCY, sizeof(settings.Currency));
     settings.RefreshSec = json["refresh"] | DEFAULT_REFRESH_S;
-    settings.CycleSec = json["cycle"] | DEFAULT_CYCLE_S;
     sanitizeSettings(settings);
 
-    Serial.printf("Settings: tz=%s currency=%s refresh=%ds cycle=%ds\n",
-                  settings.Timezone, settings.Currency, settings.RefreshSec, settings.CycleSec);
+    Serial.printf("Settings: tz=%s currency=%s refresh=%ds\n",
+                  settings.Timezone, settings.Currency, settings.RefreshSec);
     return true;
 }
 
@@ -83,7 +77,6 @@ bool saveSettings(const TSettings &settings)
     json["timezone"] = settings.Timezone;
     json["currency"] = settings.Currency;
     json["refresh"] = settings.RefreshSec;
-    json["cycle"] = settings.CycleSec;
 
     File file = SPIFFS.open(CONFIG_FILE, "w");
     if (!file)

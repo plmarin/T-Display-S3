@@ -1,10 +1,41 @@
 # XRP Ticker
 
-Visor del precio de **XRP** para la **LilyGo T-Display S3** (ESP32-S3, pantalla 320x170).
+Firmware para la **LilyGo T-Display S3** que convierte la placa en un **visor del precio de XRP** siempre encendido.
+Se conecta a tu WiFi, consulta la API pública de CoinGecko y muestra en la pantalla de 320x170 el precio actual,
+la variación de las últimas 24 horas, una gráfica del día, datos de mercado, la hora local y un calendario.
+No hace falta clave de API ni ningún servidor propio: basta con la placa y un cable USB-C.
 
 Basado en [NerdMiner v2](https://github.com/BitMaker-hub/NerdMiner_v2) (licencia MIT). Se ha eliminado todo lo
 relativo al minado de BTC y se reutiliza el portal WiFi, el guardado de configuración y el manejo de pantalla y botones.
 La caja 3D original de NerdMiner para esta placa sigue en [3d_files](3d_files/).
+
+## Qué hace
+
+- **Precio de XRP en tiempo casi real** en la moneda que elijas (`usd`, `eur`, `btc`...), refrescado cada 60 s por defecto.
+- **Variación 24h** con flecha y color (verde si sube, rojo si baja), y **máximo/mínimo** del día.
+- **Gráfica de las últimas 24 horas** con 48 velas de 30 minutos, coloreada según la tendencia.
+- **Datos de mercado**: capitalización, volumen 24h y hora del último dato.
+- **Reloj y calendario** sincronizados por NTP, con cambio de horario automático.
+- **Configuración desde el móvil** mediante un portal WiFi propio, sin recompilar.
+- **Indicador de estado** que avisa si los datos están desactualizados o si se ha perdido la conexión.
+
+## Cómo funciona
+
+1. **Arranque**: enciende la pantalla y carga los ajustes guardados en la memoria flash (SPIFFS).
+2. **WiFi**: si no hay configuración (o se mantiene KEY pulsado), abre el portal `XRPTickerAP` para elegir red y ajustes.
+   Si no consigue conectarse, reinicia y vuelve a intentarlo.
+3. **Hora**: sincroniza el reloj con `pool.ntp.org` / `time.google.com` usando la zona horaria configurada.
+4. **Datos**: una tarea en segundo plano (core 0, junto a la pila WiFi) consulta CoinGecko por HTTPS de forma periódica
+   y guarda el último resultado protegido por un mutex.
+5. **Pantalla**: el bucle principal (core 1) lee una copia de esos datos y redibuja la pantalla activa cada segundo
+   sobre un sprite en PSRAM, de modo que la interfaz nunca se bloquea esperando a la red.
+
+## Hardware
+
+- [LilyGo T-Display S3](https://www.lilygo.cc/products/t-display-s3): ESP32-S3 con 8 MB de PSRAM y pantalla ST7789
+  de 1,9" (170x320) con bus paralelo de 8 bits.
+- Botones integrados BOOT (GPIO0) y KEY (GPIO14). No hace falta ningún componente extra.
+- Funciona por USB-C o con batería LiPo (el firmware activa el GPIO15 para alimentar la pantalla con batería).
 
 ## Pantallas
 
@@ -17,7 +48,8 @@ La caja 3D original de NerdMiner para esta placa sigue en [3d_files](3d_files/).
 | 5 | Mercado  | Capitalización, volumen 24h, máx/mín, hora del último dato, señal WiFi e IP |
 
 El punto de la esquina superior derecha indica el estado: **verde** datos al día, **ámbar** datos de hace más de 5 min,
-**rojo** sin WiFi. Los puntos de la parte inferior indican la pantalla actual.
+**rojo** sin WiFi. Los puntos de la parte inferior indican la pantalla actual. La pantalla se queda fija
+hasta que pulses KEY para pasar a la siguiente.
 
 ## Botones
 
@@ -38,7 +70,6 @@ En el primer arranque (o manteniendo KEY al encender) la placa crea la red WiFi 
 |--------|-------------|-------|
 | Moneda | `usd` | Cualquier `vs_currency` de CoinGecko: `usd`, `eur`, `gbp`, `jpy`, `btc`... |
 | Refresco del precio | 60 s | Mínimo 30 s, por el límite de la API gratuita |
-| Cambiar de pantalla cada | 15 s | `0` desactiva el cambio automático |
 | Zona horaria | `CET-1CEST,M3.5.0,M10.5.0/3` | Formato POSIX TZ, con cambio de horario automático. Canarias: `WET0WEST,M3.5.0/1,M10.5.0` |
 
 Los ajustes se guardan en SPIFFS (`/xrp_config.json`) y las credenciales WiFi las guarda WiFiManager.
@@ -74,5 +105,20 @@ src/
   priceService.cpp  tarea en segundo plano que consulta CoinGecko
   display.cpp       pantallas (TFT_eSPI + OpenFontRender)
   media/fonts.h     fuente NotoSans Bold embebida
-lib/TFT_eSPI        librería de pantalla con la configuración de la T-Display S3
+platformio.ini      dependencias y configuración de TFT_eSPI para la T-Display S3 (pines, driver)
+3d_files/           caja imprimible en 3D (de NerdMiner)
 ```
+
+## Dependencias
+
+Las descarga PlatformIO automáticamente:
+
+- [TFT_eSPI](https://github.com/Bodmer/TFT_eSPI): driver de la pantalla
+- [OpenFontRender](https://github.com/takkaO/OpenFontRender): texto con fuentes TrueType
+- [ArduinoJson](https://arduinojson.org/): lectura de las respuestas de la API y de la configuración
+- [WiFiManager](https://github.com/tzapu/WiFiManager): portal de configuración WiFi
+- [OneButton](https://github.com/mathertel/OneButton): pulsaciones simples, dobles y largas
+
+## Licencia
+
+MIT, igual que el proyecto original. Ver [LICENSE](LICENSE).
