@@ -27,6 +27,10 @@
 #define COL_DOWN_DIM RGB565(68, 26, 32)
 
 #define HEADER_H     24
+#define BOOT_ANIM_MS 3400
+#define COIN_ANIM_MS 1200
+#define LOAD_LOGO_Y  14     // Logo and symbol position of the coin loading screen
+#define LOAD_NAME_Y  84
 #define STALE_MS     (5 * MINUTE_MS)
 
 static TFT_eSPI tft;
@@ -602,7 +606,7 @@ static void screenSummary()
     else if (s.chartsLoaded < total)
         snprintf(buf, sizeof(buf), "Descargando graficas %d/%d", s.chartsLoaded, total);
     else
-        snprintf(buf, sizeof(buf), "Doble clic en KEY para ver cada moneda");
+        snprintf(buf, sizeof(buf), "Manten KEY 1 s para ver cada moneda");
     text(buf, 8, 150, 11, COL_MUTED, COL_BG);
 
     if (s.chartsLoaded < total)
@@ -642,12 +646,104 @@ void displayInit()
         Serial.println("Display: font load error");
 }
 
+static float clamp01(float v)
+{
+    return v < 0 ? 0 : v > 1 ? 1 : v;
+}
+
+// Overshoots a little before settling, for a small bounce
+static float easeOutBack(float t)
+{
+    const float c1 = 1.70158f, c3 = c1 + 1;
+    float u = t - 1;
+    return 1 + c3 * u * u * u + c1 * u * u;
+}
+
+// 0..1 progress of a step that starts at `start` ms and lasts `duration` ms
+static float stepAt(uint32_t ms, uint32_t start, uint32_t duration)
+{
+    return clamp01(((float)ms - start) / duration);
+}
+
+// Boot animation frame at `ms`. From BOOT_ANIM_MS on it is the still layout the loading screen uses.
+static void drawBrand(uint32_t ms)
+{
+    // The three logos drop in one after another
+    const int gap = 24, logoY = 16;
+    const int x0 = (SCREEN_WIDTH - COIN_COUNT * LOGO_LARGE - (COIN_COUNT - 1) * gap) / 2;
+    for (int c = 0; c < COIN_COUNT; c++)
+    {
+        float t = stepAt(ms, c * 280, 1000);
+        if (t <= 0)
+            continue;
+        int y = logoY - (int)((1 - easeOutBack(t)) * (logoY + LOGO_LARGE));
+        drawLogo(LOGOS_LARGE, LOGO_LARGE, c, x0 + c * (LOGO_LARGE + gap), y);
+    }
+
+    // The name fades in
+    float fade = stepAt(ms, 1300, 800);
+    if (fade > 0)
+        text(APP_NAME, SCREEN_WIDTH / 2, 92, 26, tft.alphaBlend(fade * 255, COL_TEXT, COL_BG), COL_BG, TA_CENTER);
+
+    // A rising ticker line draws itself under the name
+    static const int8_t rise[] = {6, 2, 4, -1, 2, -3, 0, -6};
+    const int n = sizeof(rise), lx0 = 104, lx1 = 216, ly = 132;
+    const float step = (float)(lx1 - lx0) / (n - 1);
+    float t = stepAt(ms, 1800, 1000) * (n - 1);
+    if (t <= 0)
+        return;
+    float hx = lx0, hy = ly + rise[0];
+    for (int i = 0; i < n - 1 && t > i; i++)
+    {
+        float f = min(1.0f, t - i);
+        float xa = lx0 + i * step, ya = ly + rise[i];
+        hx = xa + step * f;
+        hy = ya + (rise[i + 1] - rise[i]) * f;
+        spr.drawWideLine(xa, ya, hx, hy, 2.5f, COL_UP, COL_BG);
+    }
+    spr.fillSmoothCircle(hx, hy, 3, COL_UP, COL_BG);
+}
+
+// Coin switch animation frame: the logo drops in and the symbol fades in, ending on the loading screen layout
+static void drawCoinIntro(int coin, uint32_t ms)
+{
+    float t = stepAt(ms, 0, 1000);
+    int y = LOAD_LOGO_Y - (int)((1 - easeOutBack(t)) * (LOAD_LOGO_Y + LOGO_LARGE));
+    drawLogo(LOGOS_LARGE, LOGO_LARGE, coin, (SCREEN_WIDTH - LOGO_LARGE) / 2, y);
+
+    float fade = stepAt(ms, 600, 500);
+    if (fade > 0)
+        text(COINS[coin].symbol, SCREEN_WIDTH / 2, LOAD_NAME_Y, 22, tft.alphaBlend(fade * 255, COL_TEXT, COL_BG), COL_BG,
+             TA_CENTER);
+}
+
+static void playAnimation(uint32_t duration, void (*frame)(int, uint32_t), int arg)
+{
+    uint32_t start = millis();
+    for (uint32_t ms = 0; ms < duration; ms = millis() - start)
+    {
+        spr.fillSprite(COL_BG);
+        frame(arg, ms);
+        spr.pushSprite(0, 0);
+        delay(1);
+    }
+}
+
+void displayBootAnimation()
+{
+    playAnimation(BOOT_ANIM_MS, [](int, uint32_t ms) { drawBrand(ms); }, 0);
+}
+
+void displayCoinAnimation(int coin)
+{
+    playAnimation(COIN_ANIM_MS, drawCoinIntro, coin);
+}
+
 void displayLoadingScreen(const char *status)
 {
     spr.fillSprite(COL_BG);
-    drawLogo(LOGOS_LARGE, LOGO_LARGE, 0, (SCREEN_WIDTH - LOGO_LARGE) / 2, 24);
-    text(APP_NAME, SCREEN_WIDTH / 2, 96, 26, COL_TEXT, COL_BG, TA_CENTER);
-    text(status, SCREEN_WIDTH / 2, 134, 14, COL_MUTED, COL_BG, TA_CENTER);
+    drawBrand(BOOT_ANIM_MS);
+    text(status, SCREEN_WIDTH / 2, 145, 14, COL_MUTED, COL_BG, TA_CENTER);
     text(CURRENT_VERSION, SCREEN_WIDTH - 8, 154, 11, COL_GRID, COL_BG, TA_RIGHT);
     spr.pushSprite(0, 0);
 }
@@ -666,8 +762,8 @@ void displayLoadProgress(const LoadProgress &progress)
 
     spr.fillSprite(COL_BG);
     const char *symbol = COINS[progress.coin].symbol;
-    drawLogo(LOGOS_LARGE, LOGO_LARGE, progress.coin, (SCREEN_WIDTH - LOGO_LARGE) / 2, 14);
-    text(symbol, SCREEN_WIDTH / 2, 84, 22, COL_TEXT, COL_BG, TA_CENTER);
+    drawLogo(LOGOS_LARGE, LOGO_LARGE, progress.coin, (SCREEN_WIDTH - LOGO_LARGE) / 2, LOAD_LOGO_Y);
+    text(symbol, SCREEN_WIDTH / 2, LOAD_NAME_Y, 22, COL_TEXT, COL_BG, TA_CENTER);
 
     char buf[40];
     if (WiFi.status() != WL_CONNECTED)
@@ -692,8 +788,9 @@ void displayLoadProgress(const LoadProgress &progress)
 void displaySetupScreen(const char *apName, const char *apPassword)
 {
     spr.fillSprite(COL_BG);
-    drawLogo(LOGOS_SMALL, LOGO_SMALL, 0, 14, 12);
-    text("Configuracion", 48, 9, 22, COL_TEXT, COL_BG);
+    text("Configuracion", 16, 9, 22, COL_TEXT, COL_BG);
+    for (int c = 0; c < COIN_COUNT; c++)
+        drawLogo(LOGOS_SMALL, LOGO_SMALL, c, SCREEN_WIDTH - 12 - (COIN_COUNT - c) * (LOGO_SMALL + 4), 12);
 
     const char *labels[] = {"Red WiFi", "Clave", "Web"};
     const char *values[] = {apName, apPassword, "192.168.4.1"};

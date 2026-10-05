@@ -1,4 +1,4 @@
-# XRP Ticker
+# Crypto Ticker
 
 Firmware para la **LilyGo T-Display S3** que convierte la placa en un **visor del precio de XRP, XLM y VELO** siempre encendido.
 Se conecta a tu WiFi, consulta la API pública de CoinGecko y muestra en la pantalla de 320x170 el precio actual,
@@ -13,7 +13,7 @@ La caja 3D original de NerdMiner para esta placa sigue en [3d_files](3d_files/).
 ## Qué hace
 
 - **Tres criptomonedas: XRP, XLM (Stellar) y VELO**, con una pantalla de **resumen** de las tres como pantalla
-  principal. Con un doble clic en KEY se pasa del resumen a cada una de ellas.
+  principal. Manteniendo KEY pulsado 1 s se pasa del resumen a cada una de ellas.
 - **Precio en tiempo casi real** en la moneda que elijas (`usd`, `eur`, `btc`...), refrescado cada 60 s por defecto.
 - **Variación 24h** con flecha y color (verde si sube, rojo si baja), y **máximo/mínimo** del día.
 - **Gráfica de las últimas 24 horas** con 48 velas de 30 minutos, coloreada según la tendencia.
@@ -26,8 +26,9 @@ La caja 3D original de NerdMiner para esta placa sigue en [3d_files](3d_files/).
 
 ## Cómo funciona
 
-1. **Arranque**: enciende la pantalla y carga los ajustes guardados en la memoria flash (SPIFFS).
-2. **WiFi**: si no hay configuración (o se mantiene KEY pulsado), abre el portal `XRPTickerAP` para elegir red y ajustes.
+1. **Arranque**: enciende la pantalla y muestra una animación corta (~3,4 s): caen los logos de XRP, XLM y VELO,
+   aparece el nombre y se dibuja una línea de cotización. Después carga los ajustes guardados en la memoria flash (SPIFFS).
+2. **WiFi**: si no hay configuración (o se mantiene KEY pulsado), abre el portal `CryptoTickerAP` para elegir red y ajustes.
    Si no consigue conectarse, reinicia y vuelve a intentarlo.
 3. **Hora**: sincroniza el reloj con `pool.ntp.org` / `time.google.com` usando la zona horaria configurada.
 4. **Datos**: una tarea en segundo plano (core 0, junto a la pila WiFi) consulta CoinGecko por HTTPS de forma periódica
@@ -57,7 +58,8 @@ o, si la API ha llegado a su límite, la cuenta atrás para reintentar.
 
 ### Pantallas de cada criptomoneda
 
-Con un doble clic en KEY se pasa del resumen a XRP, XLM y VELO, y de vuelta al resumen. Dentro de cada una, KEY pasa
+Manteniendo KEY pulsado 1 s (y soltando) se pasa del resumen a XRP, XLM y VELO, y de vuelta al resumen. Al entrar en una
+criptomoneda cae su logo y aparece su nombre (~1,2 s); mientras tanto se siguen descargando sus datos. Dentro de cada una, KEY pasa
 de una pantalla a otra:
 
 | # | Pantalla | Contenido |
@@ -80,14 +82,14 @@ hasta que pulses KEY para pasar a la siguiente.
 | BOOT (GPIO0), pulsación | Apagar/encender pantalla |
 | BOOT (GPIO0), doble pulsación | Girar la pantalla 180° |
 | KEY (GPIO14), pulsación | Siguiente pantalla |
-| KEY (GPIO14), doble pulsación | Siguiente vista: Resumen → XRP → XLM → VELO → Resumen |
+| KEY (GPIO14), mantener ~1 s y soltar | Siguiente vista: Resumen → XRP → XLM → VELO → Resumen |
 | KEY (GPIO14), mantener 5 s | Borrar configuración y WiFi, y reiniciar |
 | KEY (GPIO14), mantener al arrancar | Abrir el portal de configuración |
 
 ## Configuración
 
-En el primer arranque (o manteniendo KEY al encender) la placa crea la red WiFi **`XRPTickerAP`**
-(clave **`XRPTicker`**). Conéctate y abre `192.168.4.1` para elegir tu WiFi y estos ajustes:
+En el primer arranque (o manteniendo KEY al encender) la placa crea la red WiFi **`CryptoTickerAP`**
+(clave **`CryptoTicker`**). Conéctate y abre `192.168.4.1` para elegir tu WiFi y estos ajustes:
 
 | Ajuste | Por defecto | Notas |
 |--------|-------------|-------|
@@ -118,7 +120,7 @@ a una que ya se ha cargado aparece al momento.
 
 Si la API responde `429` (límite de peticiones), se paran todas las peticiones durante el tiempo que indique la
 cabecera `Retry-After` (entre 5 s y 10 min), o 2 minutos si no la envía. La pantalla de carga muestra la cuenta atrás.
-Mientras tanto se puede volver con el doble clic a una criptomoneda ya cargada. Ante cualquier otro error se reintenta
+Mientras tanto se puede volver con una pulsación larga de KEY a una criptomoneda ya cargada. Ante cualquier otro error se reintenta
 a los 30 s.
 
 ## Compilar y flashear
@@ -126,8 +128,8 @@ a los 30 s.
 Necesitas [PlatformIO](https://platformio.org/):
 
 ```bash
-pio run -e XRP-T-Display-S3                 # compilar
-pio run -e XRP-T-Display-S3 -t upload       # flashear por USB
+pio run -e Crypto-T-Display-S3                 # compilar
+pio run -e Crypto-T-Display-S3 -t upload       # flashear por USB
 pio device monitor                          # ver el log serie (115200)
 ```
 

@@ -4,8 +4,8 @@
 #include <Arduino.h>
 
 // Config portal access point
-#define DEFAULT_SSID        "XRPTickerAP"
-#define DEFAULT_WIFIPW      "XRPTicker"
+#define DEFAULT_SSID        "CryptoTickerAP"
+#define DEFAULT_WIFIPW      "CryptoTicker"
 
 // User settings defaults
 #define DEFAULT_TIMEZONE    "CET-1CEST,M3.5.0,M10.5.0/3"   // Spain (peninsula), POSIX TZ format

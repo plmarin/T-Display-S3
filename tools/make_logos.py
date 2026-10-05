@@ -26,7 +26,7 @@ OUT = pathlib.Path(__file__).resolve().parent.parent / "src" / "media" / "logos.
 
 
 def download(url):
-    request = urllib.request.Request(url, headers={"User-Agent": "XRP-Ticker-logo-tool"})
+    request = urllib.request.Request(url, headers={"User-Agent": "Crypto-Ticker-logo-tool"})
     with urllib.request.urlopen(request) as response:
         return Image.open(io.BytesIO(response.read())).convert("RGBA")
 
