@@ -5,6 +5,7 @@
 #include "priceService.h"
 
 void displayInit();
+void displayBootAnimation();  // ~1.7 s: the coin logos drop in, then the name and a ticker line appear
 void displayLoadingScreen(const char *status);
 void displaySetupScreen(const char *apName, const char *apPassword);
 void displayLoadProgress(const LoadProgress &progress);   // coin logo and progress bar while loading

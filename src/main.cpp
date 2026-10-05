@@ -62,6 +62,7 @@ void setup()
     button2.attachLongPressStart(reset_configuration);
 
     displayInit();
+    displayBootAnimation();
     displayLoadingScreen("Iniciando...");
 
     init_WifiManager(); // Returns once connected (restarts otherwise)

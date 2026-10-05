@@ -1,4 +1,4 @@
-# XRP Ticker
+# Crypto Ticker
 
 Firmware para la **LilyGo T-Display S3** que convierte la placa en un **visor del precio de XRP, XLM y VELO** siempre encendido.
 Se conecta a tu WiFi, consulta la API pública de CoinGecko y muestra en la pantalla de 320x170 el precio actual,
@@ -26,8 +26,9 @@ La caja 3D original de NerdMiner para esta placa sigue en [3d_files](3d_files/).
 
 ## Cómo funciona
 
-1. **Arranque**: enciende la pantalla y carga los ajustes guardados en la memoria flash (SPIFFS).
-2. **WiFi**: si no hay configuración (o se mantiene KEY pulsado), abre el portal `XRPTickerAP` para elegir red y ajustes.
+1. **Arranque**: enciende la pantalla y muestra una animación corta (~1,7 s): caen los logos de XRP, XLM y VELO,
+   aparece el nombre y se dibuja una línea de cotización. Después carga los ajustes guardados en la memoria flash (SPIFFS).
+2. **WiFi**: si no hay configuración (o se mantiene KEY pulsado), abre el portal `CryptoTickerAP` para elegir red y ajustes.
    Si no consigue conectarse, reinicia y vuelve a intentarlo.
 3. **Hora**: sincroniza el reloj con `pool.ntp.org` / `time.google.com` usando la zona horaria configurada.
 4. **Datos**: una tarea en segundo plano (core 0, junto a la pila WiFi) consulta CoinGecko por HTTPS de forma periódica
@@ -86,8 +87,8 @@ hasta que pulses KEY para pasar a la siguiente.
 
 ## Configuración
 
-En el primer arranque (o manteniendo KEY al encender) la placa crea la red WiFi **`XRPTickerAP`**
-(clave **`XRPTicker`**). Conéctate y abre `192.168.4.1` para elegir tu WiFi y estos ajustes:
+En el primer arranque (o manteniendo KEY al encender) la placa crea la red WiFi **`CryptoTickerAP`**
+(clave **`CryptoTicker`**). Conéctate y abre `192.168.4.1` para elegir tu WiFi y estos ajustes:
 
 | Ajuste | Por defecto | Notas |
 |--------|-------------|-------|
@@ -126,8 +127,8 @@ a los 30 s.
 Necesitas [PlatformIO](https://platformio.org/):
 
 ```bash
-pio run -e XRP-T-Display-S3                 # compilar
-pio run -e XRP-T-Display-S3 -t upload       # flashear por USB
+pio run -e Crypto-T-Display-S3                 # compilar
+pio run -e Crypto-T-Display-S3 -t upload       # flashear por USB
 pio device monitor                          # ver el log serie (115200)
 ```
 

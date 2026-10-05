@@ -60,7 +60,7 @@ void init_WifiManager()
     wm.setConfigPortalTimeout(180);
     wm.setTitle(APP_NAME);
 
-    WiFiManagerParameter header_html("<hr><h3>XRP Ticker</h3>");
+    WiFiManagerParameter header_html("<hr><h3>" APP_NAME "</h3>");
 
     WiFiManagerParameter currency_box("currency", "Moneda (usd, eur, gbp...)", Settings.Currency, sizeof(Settings.Currency) - 1);
 
