@@ -68,7 +68,7 @@ static int fitSize(const char *str, int maxSize, int maxWidth)
 
 static void fmtPrice(double price, char *buf, size_t len)
 {
-    int decimals = price >= 100 ? 2 : price >= 1 ? 4 : price >= 0.01 ? 5 : 8;
+    int decimals = price >= 100 ? 2 : price >= 1 ? 4 : price >= 0.01 ? 5 : price >= 0.0001 ? 6 : 8;
     snprintf(buf, len, "%.*f", decimals, price);
 }
 
@@ -120,6 +120,18 @@ static void drawXrpLogo(int cx, int cy, int r, uint16_t color, uint16_t bg)
     }
 }
 
+// XRP mark for XRP, a round badge with the initial for the other coins
+static void drawCoinLogo(const char *symbol, int cx, int cy, int r, uint16_t color, uint16_t bg)
+{
+    if (strcmp(symbol, "XRP") == 0)
+        return drawXrpLogo(cx, cy, r, color, bg);
+
+    spr.fillSmoothCircle(cx, cy, r, color, bg);
+    char initial[2] = {symbol[0], '\0'};
+    int size = r * 3 / 2;
+    text(initial, cx, cy - size * 6 / 10, size, bg, color, TA_CENTER);
+}
+
 // Coloured triangle + percentage, anchored at x according to align
 static void drawChange(double change, int x, int y, int size, uint16_t bg, TextAlign align)
 {
@@ -158,10 +170,10 @@ static void drawWaiting(const PriceData &d)
 static void drawHeader(const PriceData &d, bool showClock)
 {
     spr.fillRect(0, 0, SCREEN_WIDTH, HEADER_H, COL_PANEL);
-    drawXrpLogo(14, 12, 8, COL_TEXT, COL_PANEL);
+    drawCoinLogo(d.symbol, 14, 12, 8, COL_TEXT, COL_PANEL);
 
-    char pair[16];
-    snprintf(pair, sizeof(pair), "XRP / %s", d.currency);
+    char pair[20];
+    snprintf(pair, sizeof(pair), "%s / %s", d.symbol, d.currency);
     text(pair, 30, 4, 15, COL_TEXT, COL_PANEL);
 
     // Status: green = fresh data, amber = stale data, red = no WiFi
@@ -567,6 +579,11 @@ void displayDraw()
 void displayNextScreen()
 {
     s_screen = (s_screen + 1) % screenCount;
+    s_dirty = true;
+}
+
+void displayRefresh()
+{
     s_dirty = true;
 }
 

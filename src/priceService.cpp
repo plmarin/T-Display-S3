@@ -11,7 +11,6 @@
 
 // CoinGecko public API (no key needed, ~10-30 calls/min)
 #define API_BASE            "https://api.coingecko.com/api/v3"
-#define COIN_ID             "ripple"
 
 #define CHART_REFRESH_MS    (10 * MINUTE_MS)
 #define DAILY_REFRESH_MS    (30 * MINUTE_MS)
@@ -24,10 +23,42 @@
 #define ERR_PARSE           -100
 #define ERR_DATA            -101
 
+const Coin COINS[COIN_COUNT] = {
+    {"XRP", "ripple"},
+    {"XLM", "stellar"},
+    {"VELO", "velo"},
+};
+
+// Waits `wait` ms from `start`; a zero wait is due right away
+struct Timer
+{
+    uint32_t start = 0;
+    uint32_t wait = 0;
+};
+
+struct CoinTimers
+{
+    Timer price, chart, daily;
+};
+
 static SemaphoreHandle_t s_mutex;
-static PriceData s_data;
+static PriceData s_data[COIN_COUNT];   // Cached per coin, so switching back shows data right away
+static CoinTimers s_timers[COIN_COUNT];
+static Timer s_rateLimit;              // A 429 pauses every request, whatever the coin
+static volatile int s_coin = 0;
 static String s_vs;
 static uint32_t s_refreshMs;
+
+static bool due(const Timer &timer)
+{
+    return millis() - timer.start >= timer.wait;
+}
+
+static void schedule(Timer &timer, uint32_t wait)
+{
+    timer.start = millis();
+    timer.wait = wait;
+}
 
 // Big JSON documents go to PSRAM instead of the internal heap
 struct SpiRamAllocator
@@ -68,16 +99,17 @@ static int fetchJson(const String &url, JsonDocument &doc, const JsonDocument *f
     return code;
 }
 
-static void setError(int code)
+static void setError(int c, int code)
 {
     xSemaphoreTake(s_mutex, portMAX_DELAY);
-    s_data.lastError = code;
+    s_data[c].lastError = code;
     xSemaphoreGive(s_mutex);
 }
 
-static int fetchPrice()
+static int fetchPrice(int c)
 {
-    String url = API_BASE "/simple/price?ids=" COIN_ID "&vs_currencies=" + s_vs +
+    const char *id = COINS[c].id;
+    String url = API_BASE "/simple/price?ids=" + String(id) + "&vs_currencies=" + s_vs +
                  "&include_market_cap=true&include_24hr_vol=true&include_24hr_change=true"
                  "&include_last_updated_at=true&precision=full";
 
@@ -86,29 +118,31 @@ static int fetchPrice()
     if (code != HTTP_CODE_OK)
         return code;
 
-    JsonObject coin = doc[COIN_ID];
+    JsonObject coin = doc[id];
     if (coin.isNull() || !coin[s_vs].is<double>())
         return ERR_DATA;
 
     xSemaphoreTake(s_mutex, portMAX_DELAY);
-    s_data.price = coin[s_vs].as<double>();
-    s_data.change24h = coin[s_vs + "_24h_change"] | 0.0;
-    s_data.marketCap = coin[s_vs + "_market_cap"] | 0.0;
-    s_data.volume24h = coin[s_vs + "_24h_vol"] | 0.0;
-    s_data.updatedAt = coin["last_updated_at"] | 0;
-    s_data.fetchedMs = millis();
-    s_data.valid = true;
-    s_data.lastError = 0;
+    PriceData &data = s_data[c];
+    data.price = coin[s_vs].as<double>();
+    data.change24h = coin[s_vs + "_24h_change"] | 0.0;
+    data.marketCap = coin[s_vs + "_market_cap"] | 0.0;
+    data.volume24h = coin[s_vs + "_24h_vol"] | 0.0;
+    data.updatedAt = coin["last_updated_at"] | 0;
+    data.fetchedMs = millis();
+    data.valid = true;
+    data.lastError = 0;
     xSemaphoreGive(s_mutex);
 
-    Serial.printf("Price: XRP = %.6f %s (%+.2f%%)\n", s_data.price, s_data.currency, s_data.change24h);
+    Serial.printf("Price: %s = %.8g %s (%+.2f%%)\n", COINS[c].symbol, coin[s_vs].as<double>(), s_data[c].currency,
+                  coin[s_vs + "_24h_change"] | 0.0);
     return code;
 }
 
-static int fetchChart()
+static int fetchChart(int c)
 {
     // 48 candles of 30 minutes: [timestamp, open, high, low, close]
-    String url = API_BASE "/coins/" COIN_ID "/ohlc?days=1&precision=full&vs_currency=" + s_vs;
+    String url = API_BASE "/coins/" + String(COINS[c].id) + "/ohlc?days=1&precision=full&vs_currency=" + s_vs;
 
     DynamicJsonDocument doc(16384);
     int code = fetchJson(url, doc);
@@ -138,21 +172,22 @@ static int fetchChart()
     }
 
     xSemaphoreTake(s_mutex, portMAX_DELAY);
-    memcpy(s_data.chart, points, sizeof(float) * count);
-    s_data.chartCount = count;
-    s_data.high24h = high;
-    s_data.low24h = low;
-    s_data.chartValid = true;
+    PriceData &data = s_data[c];
+    memcpy(data.chart, points, sizeof(float) * count);
+    data.chartCount = count;
+    data.high24h = high;
+    data.low24h = low;
+    data.chartValid = true;
     xSemaphoreGive(s_mutex);
 
-    Serial.printf("Price: chart updated, %u points, high %.6f low %.6f\n", (unsigned)count, high, low);
+    Serial.printf("Price: %s chart updated, %u points, high %.8g low %.8g\n", COINS[c].symbol, (unsigned)count, high, low);
     return code;
 }
 
-static int fetchDaily()
+static int fetchDaily(int c)
 {
     // Hourly samples for 2-90 days: [timestamp ms, value]
-    String url = API_BASE "/coins/" COIN_ID "/market_chart?days=" + String(DAILY_HISTORY_DAYS) +
+    String url = API_BASE "/coins/" + String(COINS[c].id) + "/market_chart?days=" + String(DAILY_HISTORY_DAYS) +
                  "&precision=full&vs_currency=" + s_vs;
 
     StaticJsonDocument<64> filter;
@@ -226,43 +261,53 @@ static int fetchDaily()
 
     int shown = min(count, DAILY_MAX_DAYS);
     xSemaphoreTake(s_mutex, portMAX_DELAY);
-    memcpy(s_data.daily, days + count - shown, sizeof(DailyBar) * shown);
-    s_data.dailyCount = shown;
-    s_data.dailyValid = true;
+    PriceData &data = s_data[c];
+    memcpy(data.daily, days + count - shown, sizeof(DailyBar) * shown);
+    data.dailyCount = shown;
+    data.dailyValid = true;
     xSemaphoreGive(s_mutex);
 
-    Serial.printf("Price: daily updated, %d days, MACD %.6f signal %.6f\n",
-                  shown, days[count - 1].macd, days[count - 1].signal);
+    Serial.printf("Price: %s daily updated, %d days, MACD %.6g signal %.6g\n",
+                  COINS[c].symbol, shown, days[count - 1].macd, days[count - 1].signal);
     return code;
 }
 
-static uint32_t nextDelay(int code, uint32_t okDelay)
+static uint32_t nextDelay(int c, int code, uint32_t okDelay)
 {
     if (code == HTTP_CODE_OK)
         return okDelay;
-    Serial.printf("Price: request failed (%d)\n", code);
-    setError(code);
-    return code == HTTP_CODE_TOO_MANY_REQUESTS ? RATE_LIMIT_MS : RETRY_MS;
+    Serial.printf("Price: %s request failed (%d)\n", COINS[c].symbol, code);
+    setError(c, code);
+    if (code == HTTP_CODE_TOO_MANY_REQUESTS)
+    {
+        schedule(s_rateLimit, RATE_LIMIT_MS);
+        return RATE_LIMIT_MS;
+    }
+    return RETRY_MS;
+}
+
+// Runs one request if due; returns false when rate limited, so the rest wait too
+static bool poll(int c, Timer &timer, int (*fetch)(int), uint32_t okDelay)
+{
+    if (!due(s_rateLimit))
+        return false;
+    if (due(timer))
+        schedule(timer, nextDelay(c, fetch(c), okDelay));
+    return true;
 }
 
 static void priceTask(void *)
 {
-    uint32_t nextPrice = millis();
-    uint32_t nextChart = millis();
-    uint32_t nextDaily = millis();
-
     for (;;)
     {
         if (WiFi.status() == WL_CONNECTED)
         {
-            if ((int32_t)(millis() - nextPrice) >= 0)
-                nextPrice = millis() + nextDelay(fetchPrice(), s_refreshMs);
-
-            if ((int32_t)(millis() - nextChart) >= 0)
-                nextChart = millis() + nextDelay(fetchChart(), CHART_REFRESH_MS);
-
-            if ((int32_t)(millis() - nextDaily) >= 0)
-                nextDaily = millis() + nextDelay(fetchDaily(), DAILY_REFRESH_MS);
+            // Only the coin on screen is polled
+            int c = s_coin;
+            CoinTimers &timers = s_timers[c];
+            poll(c, timers.price, fetchPrice, s_refreshMs) &&
+                poll(c, timers.chart, fetchChart, CHART_REFRESH_MS) &&
+                poll(c, timers.daily, fetchDaily, DAILY_REFRESH_MS);
         }
         vTaskDelay(pdMS_TO_TICKS(500));
     }
@@ -271,23 +316,36 @@ static void priceTask(void *)
 void priceServiceBegin(const TSettings &settings)
 {
     s_mutex = xSemaphoreCreateMutex();
-    memset(&s_data, 0, sizeof(s_data));
 
     s_vs = settings.Currency;
     s_refreshMs = settings.RefreshSec * SECOND_MS;
     String upper = s_vs;
     upper.toUpperCase();
-    strlcpy(s_data.currency, upper.c_str(), sizeof(s_data.currency));
+    for (int c = 0; c < COIN_COUNT; c++)
+    {
+        memset(&s_data[c], 0, sizeof(PriceData));
+        strlcpy(s_data[c].currency, upper.c_str(), sizeof(s_data[c].currency));
+        s_data[c].symbol = COINS[c].symbol;
+        if (strcasecmp(settings.Coin, COINS[c].symbol) == 0)
+            s_coin = c;
+    }
 
     // TLS needs a generous stack; run on core 0 next to the WiFi stack so the UI loop stays responsive
     xTaskCreatePinnedToCore(priceTask, "Price", 16384, NULL, 1, NULL, 0);
+}
+
+const char *priceServiceNextCoin()
+{
+    s_coin = (s_coin + 1) % COIN_COUNT;
+    Serial.printf("Price: switched to %s\n", COINS[s_coin].symbol);
+    return COINS[s_coin].symbol;
 }
 
 PriceData priceServiceGet()
 {
     PriceData copy;
     xSemaphoreTake(s_mutex, portMAX_DELAY);
-    copy = s_data;
+    copy = s_data[s_coin];
     xSemaphoreGive(s_mutex);
     return copy;
 }

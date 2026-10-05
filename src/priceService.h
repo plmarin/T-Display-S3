@@ -7,6 +7,15 @@
 #define CHART_MAX_POINTS 64
 #define DAILY_MAX_DAYS   30
 
+struct Coin
+{
+    const char *symbol;    // shown on screen and stored in the settings, e.g. "XRP"
+    const char *id;        // CoinGecko coin id, e.g. "ripple"
+};
+
+#define COIN_COUNT 3
+extern const Coin COINS[COIN_COUNT];
+
 struct DailyBar
 {
     float open, high, low, close;
@@ -36,12 +45,16 @@ struct PriceData
 
     int lastError;         // HTTP code (or negative) of the last failed request, 0 if none
     char currency[8];      // upper case, e.g. "USD"
+    const char *symbol;    // coin shown, e.g. "XRP"
 };
 
-// Starts the background task that polls CoinGecko for XRP prices
+// Starts the background task that polls CoinGecko for the coin selected in the settings
 void priceServiceBegin(const TSettings &settings);
 
-// Thread safe snapshot of the latest data
+// Switches to the next coin and returns its symbol. Data already fetched for it is shown right away.
+const char *priceServiceNextCoin();
+
+// Thread safe snapshot of the latest data for the current coin
 PriceData priceServiceGet();
 
 #endif // PRICE_SERVICE_H

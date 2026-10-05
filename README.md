@@ -1,6 +1,6 @@
 # XRP Ticker
 
-Firmware para la **LilyGo T-Display S3** que convierte la placa en un **visor del precio de XRP** siempre encendido.
+Firmware para la **LilyGo T-Display S3** que convierte la placa en un **visor del precio de XRP, XLM y VELO** siempre encendido.
 Se conecta a tu WiFi, consulta la API pública de CoinGecko y muestra en la pantalla de 320x170 el precio actual,
 la variación de las últimas 24 horas, una gráfica del día, velas diarias con volumen, el MACD diario, datos de mercado
 y la hora local.
@@ -12,7 +12,8 @@ La caja 3D original de NerdMiner para esta placa sigue en [3d_files](3d_files/).
 
 ## Qué hace
 
-- **Precio de XRP en tiempo casi real** en la moneda que elijas (`usd`, `eur`, `btc`...), refrescado cada 60 s por defecto.
+- **Tres criptomonedas: XRP, XLM (Stellar) y VELO**, que se cambian con un doble clic en KEY.
+- **Precio en tiempo casi real** en la moneda que elijas (`usd`, `eur`, `btc`...), refrescado cada 60 s por defecto.
 - **Variación 24h** con flecha y color (verde si sube, rojo si baja), y **máximo/mínimo** del día.
 - **Gráfica de las últimas 24 horas** con 48 velas de 30 minutos, coloreada según la tendencia.
 - **Velas diarias de los últimos 30 días** con el volumen de cada día debajo.
@@ -62,6 +63,7 @@ hasta que pulses KEY para pasar a la siguiente.
 | BOOT (GPIO0), pulsación | Apagar/encender pantalla |
 | BOOT (GPIO0), doble pulsación | Girar la pantalla 180° |
 | KEY (GPIO14), pulsación | Siguiente pantalla |
+| KEY (GPIO14), doble pulsación | Siguiente criptomoneda: XRP → XLM → VELO → XRP |
 | KEY (GPIO14), mantener 5 s | Borrar configuración y WiFi, y reiniciar |
 | KEY (GPIO14), mantener al arrancar | Abrir el portal de configuración |
 
@@ -77,18 +79,24 @@ En el primer arranque (o manteniendo KEY al encender) la placa crea la red WiFi 
 | Zona horaria | `CET-1CEST,M3.5.0,M10.5.0/3` | Formato POSIX TZ, con cambio de horario automático. Canarias: `WET0WEST,M3.5.0/1,M10.5.0` |
 
 Los ajustes se guardan en SPIFFS (`/xrp_config.json`) y las credenciales WiFi las guarda WiFiManager.
+La criptomoneda elegida con el doble clic también se guarda ahí, así que se mantiene al reiniciar.
 
 ## Datos
 
-Se usa la API pública de [CoinGecko](https://www.coingecko.com/en/api), que no necesita clave:
+Se usa la API pública de [CoinGecko](https://www.coingecko.com/en/api), que no necesita clave. Los IDs de las
+criptomonedas son `ripple` (XRP), `stellar` (XLM) y `velo` (VELO); en las rutas de abajo aparece `{id}`:
 
-- `simple/price?ids=ripple`: precio, variación 24h, capitalización y volumen, en cada refresco.
-- `coins/ripple/ohlc?days=1`: 48 velas de 30 minutos para la gráfica y el máx/mín, cada 10 minutos.
-- `coins/ripple/market_chart?days=60`: precios y volumen horarios de 60 días, cada 30 minutos. Se agrupan por día (UTC)
+- `simple/price?ids={id}`: precio, variación 24h, capitalización y volumen, en cada refresco.
+- `coins/{id}/ohlc?days=1`: 48 velas de 30 minutos para la gráfica y el máx/mín, cada 10 minutos.
+- `coins/{id}/market_chart?days=60`: precios y volumen horarios de 60 días, cada 30 minutos. Se agrupan por día (UTC)
   para formar las velas diarias. El volumen de cada día es el volumen de 24h al final del día. El MACD se calcula con
   los 60 cierres para que las medias estén estabilizadas en los 30 días que se muestran.
 
-Si la API responde `429` (límite de peticiones), se espera 2 minutos antes de reintentar. Ante cualquier otro error se reintenta a los 30 s.
+Solo se consulta la criptomoneda que está en pantalla. Los datos de cada una se guardan en memoria, así que al volver
+a una que ya se ha visto aparecen al momento y solo se piden de nuevo cuando toca refrescarlos.
+
+Si la API responde `429` (límite de peticiones), se paran todas las peticiones durante 2 minutos. Ante cualquier otro
+error se reintenta a los 30 s.
 
 ## Compilar y flashear
 

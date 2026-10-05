@@ -12,12 +12,19 @@
 #define REDRAW_MS SECOND_MS
 
 // Button 1 (BOOT): click = screen on/off, double click = rotate 180
-// Button 2 (KEY):  click = next screen, hold 5 s = erase config
+// Button 2 (KEY):  click = next screen, double click = next coin (XRP, XLM, VELO), hold 5 s = erase config
 //                  hold while booting = open config portal
 OneButton button1(PIN_BUTTON_1);
 OneButton button2(PIN_BUTTON_2);
 
 static unsigned long lastDraw = 0;
+
+static void nextCoin()
+{
+    strlcpy(Settings.Coin, priceServiceNextCoin(), sizeof(Settings.Coin));
+    saveSettings(Settings); // Keep the coin after a restart
+    displayRefresh();
+}
 
 void setup()
 {
@@ -35,6 +42,7 @@ void setup()
 
     button2.setPressMs(5 * SECOND_MS);
     button2.attachClick(displayNextScreen);
+    button2.attachDoubleClick(nextCoin);
     button2.attachLongPressStart(reset_configuration);
 
     displayInit();
