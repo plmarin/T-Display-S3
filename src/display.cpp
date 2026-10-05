@@ -21,6 +21,7 @@
 #define COL_UP       RGB565(35, 197, 130)
 #define COL_DOWN     RGB565(240, 72, 80)
 #define COL_WARN     RGB565(230, 170, 40)
+#define COL_MACD     RGB565(88, 166, 255)
 #define COL_UP_DIM   RGB565(16, 58, 44)
 #define COL_DOWN_DIM RGB565(68, 26, 32)
 
@@ -309,112 +310,144 @@ static void screenClock(const PriceData &d)
     text(buf, SCREEN_WIDTH / 2, 126, 18, COL_MUTED, COL_BG, TA_CENTER);
 }
 
-// Days since 1970-01-01 for a civil date (proleptic Gregorian)
-static long daysFromCivil(int y, int m, int d)
+static void screenCandles(const PriceData &d)
 {
-    y -= m <= 2;
-    long era = (y >= 0 ? y : y - 399) / 400;
-    long yoe = y - era * 400;
-    long doy = (153 * (m + (m > 2 ? -3 : 9)) + 2) / 5 + d - 1;
-    long doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    return era * 146097 + doe - 719468;
-}
+    drawHeader(d, true);
+    if (!d.dailyValid)
+        return drawWaiting(d);
 
-static int daysInMonth(int year, int month)
-{
-    static const int days[] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
-    bool leap = (year % 4 == 0 && year % 100 != 0) || year % 400 == 0;
-    return month == 2 && leap ? 29 : days[month - 1];
-}
-
-// EU rule: summer time from the last Sunday of March to the last Sunday of October, at 01:00 UTC
-static time_t euDstSwitch(int year, int month)
-{
-    long last = daysFromCivil(year, month, daysInMonth(year, month));
-    long weekday = (last + 4) % 7; // 1970-01-01 was a Thursday; 0 = Sunday
-    return (time_t)(last - weekday) * 86400 + 3600;
-}
-
-// Madrid local time, independent of the timezone configured in the portal
-static bool madridNow(struct tm &out, bool &summer)
-{
-    time_t now = time(nullptr);
-    if (now < 1700000000) // NTP not synced yet
-        return false;
-
-    struct tm utc;
-    gmtime_r(&now, &utc);
-    int year = utc.tm_year + 1900;
-    summer = now >= euDstSwitch(year, 3) && now < euDstSwitch(year, 10);
-
-    time_t local = now + (summer ? 2 : 1) * 3600;
-    gmtime_r(&local, &out);
-    return true;
-}
-
-static void screenCalendar(const PriceData &d)
-{
-    static const char *days[] = {"Domingo", "Lunes", "Martes", "Miercoles", "Jueves", "Viernes", "Sabado"};
-    static const char *months[] = {"Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio",
-                                   "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"};
-    static const char *weekHeader[] = {"L", "M", "X", "J", "V", "S", "D"};
-    drawHeader(d, false);
-
-    struct tm now;
-    bool summer;
-    if (!madridNow(now, summer))
+    const DailyBar *bars = d.daily;
+    const int n = d.dailyCount;
+    float lo = bars[0].low, hi = bars[0].high, maxVolume = 0;
+    for (int i = 0; i < n; i++)
     {
-        text("Sincronizando hora...", SCREEN_WIDTH / 2, 76, 16, COL_MUTED, COL_BG, TA_CENTER);
-        return;
+        lo = min(lo, bars[i].low);
+        hi = max(hi, bars[i].high);
+        maxVolume = max(maxVolume, bars[i].volume);
+    }
+    if (hi - lo < hi * 1e-6f) // Flat range: avoid dividing by zero
+    {
+        hi += hi * 0.001f;
+        lo -= lo * 0.001f;
     }
 
-    // Left column: Madrid clock and date
-    char buf[32];
-    text("MADRID", 12, 30, 12, COL_MUTED, COL_BG);
-    strftime(buf, sizeof(buf), "%H:%M", &now);
-    text(buf, 10, 44, 38, COL_TEXT, COL_BG);
-    int clockWidth = textWidth(buf, 38);
-    snprintf(buf, sizeof(buf), "%02d", now.tm_sec);
-    text(buf, 10 + clockWidth + 4, 62, 16, COL_MUTED, COL_BG);
+    // Candles on top, volume bars below
+    const int x0 = 8, x1 = 246, y0 = 32, y1 = 108, vy0 = 116, vy1 = 140;
+    const float step = (float)(x1 - x0) / n;
+    const int body = max(1, (int)(step * 0.6f)) | 1; // Odd, so the wick sits in the middle
 
-    text(days[now.tm_wday], 12, 92, 18, COL_TEXT, COL_BG);
-    snprintf(buf, sizeof(buf), "%d %s %d", now.tm_mday, months[now.tm_mon], now.tm_year + 1900);
-    text(buf, 12, 116, 14, COL_MUTED, COL_BG);
-    text(summer ? "UTC+2 (verano)" : "UTC+1 (invierno)", 12, 138, 12, COL_GRID, COL_BG);
+    auto Y = [&](float v) { return (int)(y1 - (v - lo) / (hi - lo) * (y1 - y0)); };
 
-    // Right column: month grid, Monday first
-    const int gx = 152, cellW = 23, cellH = 15, gy = 58;
-    const int gridCenter = gx + cellW * 7 / 2;
-    snprintf(buf, sizeof(buf), "%s %d", months[now.tm_mon], now.tm_year + 1900);
-    text(buf, gridCenter, 28, 13, COL_TEXT, COL_BG, TA_CENTER);
-
-    for (int c = 0; c < 7; c++)
-        text(weekHeader[c], gx + c * cellW + cellW / 2, 44, 11, c >= 5 ? COL_DOWN : COL_MUTED, COL_BG, TA_CENTER);
-
-    int firstWeekday = ((now.tm_wday - (now.tm_mday - 1)) % 7 + 7) % 7; // 0 = Sunday
-    int col = (firstWeekday + 6) % 7;                                  // 0 = Monday
-    int total = daysInMonth(now.tm_year + 1900, now.tm_mon + 1);
-    int row = 0;
-    for (int day = 1; day <= total; day++)
+    for (int i = 0; i <= 2; i++)
     {
-        int x = gx + col * cellW;
-        int y = gy + row * cellH;
-        snprintf(buf, sizeof(buf), "%d", day);
-        if (day == now.tm_mday)
+        int y = y0 + i * (y1 - y0) / 2;
+        for (int x = x0; x < x1; x += 6)
+            spr.drawFastHLine(x, y, 3, COL_GRID);
+    }
+
+    for (int i = 0; i < n; i++)
+    {
+        const DailyBar &bar = bars[i];
+        bool up = bar.close >= bar.open;
+        uint16_t color = up ? COL_UP : COL_DOWN;
+        int cx = x0 + step * i + step / 2;
+
+        spr.drawFastVLine(cx, Y(bar.high), Y(bar.low) - Y(bar.high) + 1, color);
+        int top = Y(max(bar.open, bar.close));
+        int bottom = Y(min(bar.open, bar.close));
+        spr.fillRect(cx - body / 2, top, body, bottom - top + 1, color);
+
+        if (maxVolume > 0)
         {
-            spr.fillSmoothRoundRect(x + 1, y - 1, cellW - 2, cellH, 4, COL_UP, COL_BG);
-            text(buf, x + cellW / 2, y, 11, COL_BG, COL_UP, TA_CENTER);
-        }
-        else
-        {
-            text(buf, x + cellW / 2, y, 11, col >= 5 ? COL_MUTED : COL_TEXT, COL_BG, TA_CENTER);
-        }
-        if (++col == 7)
-        {
-            col = 0;
-            row++;
+            int h = max(1, (int)(bar.volume / maxVolume * (vy1 - vy0)));
+            spr.fillRect(cx - body / 2, vy1 - h + 1, body, h, up ? COL_UP_DIM : COL_DOWN_DIM);
         }
     }
+
+    // Right column: price range, last close and the volume scale
+    char buf[24];
+    const int right = SCREEN_WIDTH - 8;
+    const DailyBar &last = bars[n - 1];
+    fmtPrice(hi, buf, sizeof(buf));
+    text(buf, right, y0 - 4, 13, COL_MUTED, COL_BG, TA_RIGHT);
+    fmtPrice(lo, buf, sizeof(buf));
+    text(buf, right, y1 - 12, 13, COL_MUTED, COL_BG, TA_RIGHT);
+    fmtPrice(last.close, buf, sizeof(buf));
+    text(buf, right, 60, fitSize(buf, 18, SCREEN_WIDTH - x1 - 12), last.close >= last.open ? COL_UP : COL_DOWN,
+         COL_BG, TA_RIGHT);
+    text("VOL", right, vy0, 11, COL_MUTED, COL_BG, TA_RIGHT);
+    fmtCompact(maxVolume, buf, sizeof(buf));
+    text(buf, right, vy0 + 11, 13, COL_MUTED, COL_BG, TA_RIGHT);
+
+    snprintf(buf, sizeof(buf), "Velas diarias %dd", n);
+    text(buf, x0, 144, 13, COL_MUTED, COL_BG);
+    drawChange((last.close / last.open - 1) * 100, right, 143, 14, COL_BG, TA_RIGHT);
+}
+
+static void screenMacd(const PriceData &d)
+{
+    drawHeader(d, true);
+    if (!d.dailyValid)
+        return drawWaiting(d);
+
+    const DailyBar *bars = d.daily;
+    const int n = d.dailyCount;
+    float lo = 0, hi = 0;
+    for (int i = 0; i < n; i++)
+    {
+        float hist = bars[i].macd - bars[i].signal;
+        lo = min(lo, min(hist, min(bars[i].macd, bars[i].signal)));
+        hi = max(hi, max(hist, max(bars[i].macd, bars[i].signal)));
+    }
+    if (hi - lo < 1e-9f)
+    {
+        hi += 1e-6f;
+        lo -= 1e-6f;
+    }
+
+    const int x0 = 8, x1 = 246, y0 = 34, y1 = 138;
+    const float step = (float)(x1 - x0) / n;
+    const int body = max(1, (int)(step * 0.6f)) | 1;
+
+    auto X = [&](int i) { return x0 + step * i + step / 2; };
+    auto Y = [&](float v) { return y1 - (v - lo) / (hi - lo) * (y1 - y0); };
+
+    int zero = Y(0);
+    for (int x = x0; x < x1; x += 6)
+        spr.drawFastHLine(x, zero, 3, COL_GRID);
+
+    // Histogram behind, MACD and signal lines on top
+    for (int i = 0; i < n; i++)
+    {
+        float hist = bars[i].macd - bars[i].signal;
+        int y = Y(hist);
+        spr.fillRect((int)X(i) - body / 2, min(y, zero), body, abs(y - zero) + 1, hist >= 0 ? COL_UP_DIM : COL_DOWN_DIM);
+    }
+    for (int i = 0; i < n - 1; i++)
+    {
+        spr.drawWideLine(X(i), Y(bars[i].signal), X(i + 1), Y(bars[i + 1].signal), 1.5f, COL_WARN);
+        spr.drawWideLine(X(i), Y(bars[i].macd), X(i + 1), Y(bars[i + 1].macd), 2, COL_MACD);
+    }
+
+    // Right column: latest values
+    const DailyBar &last = bars[n - 1];
+    float hist = last.macd - last.signal;
+    const char *labels[] = {"MACD", "Senal", "Hist"};
+    const float values[] = {last.macd, last.signal, hist};
+    const uint16_t colors[] = {COL_MACD, COL_WARN, hist >= 0 ? COL_UP : COL_DOWN};
+    const int right = SCREEN_WIDTH - 8;
+    char buf[24];
+    for (int i = 0; i < 3; i++)
+    {
+        int y = y0 - 4 + i * 36;
+        text(labels[i], right, y, 11, colors[i], COL_BG, TA_RIGHT);
+        snprintf(buf, sizeof(buf), "%+.3g", values[i]);
+        text(buf, right, y + 12, fitSize(buf, 14, SCREEN_WIDTH - x1 - 10), COL_TEXT, COL_BG, TA_RIGHT);
+    }
+
+    text("MACD diario (12,26,9)", x0, 144, 13, COL_MUTED, COL_BG);
+    text(last.macd >= last.signal ? "Alcista" : "Bajista", right, 144, 13, last.macd >= last.signal ? COL_UP : COL_DOWN,
+         COL_BG, TA_RIGHT);
 }
 
 static void screenMarket(const PriceData &d)
@@ -465,7 +498,7 @@ static void screenMarket(const PriceData &d)
 }
 
 typedef void (*ScreenFunction)(const PriceData &);
-static const ScreenFunction screens[] = {screenPrice, screenChart, screenClock, screenCalendar, screenMarket};
+static const ScreenFunction screens[] = {screenPrice, screenChart, screenCandles, screenMacd, screenClock, screenMarket};
 static const int screenCount = sizeof(screens) / sizeof(screens[0]);
 
 static void drawPager()
