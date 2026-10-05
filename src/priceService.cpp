@@ -4,6 +4,7 @@
 #include <WiFiClientSecure.h>
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
+#include <esp_heap_caps.h>
 
 #include "timeconst.h"
 #include "version.h"
@@ -13,6 +14,10 @@
 #define COIN_ID             "ripple"
 
 #define CHART_REFRESH_MS    (10 * MINUTE_MS)
+#define DAILY_REFRESH_MS    (30 * MINUTE_MS)
+#define DAILY_HISTORY_DAYS  60            // Hourly samples; the extra days warm up the MACD averages
+#define DAILY_DOC_SIZE      (256 * 1024)  // ~1440 hourly prices + volumes, kept in PSRAM
+#define DAY_MS              86400000.0
 #define RETRY_MS            (30 * SECOND_MS)
 #define RATE_LIMIT_MS       (2 * MINUTE_MS)
 
@@ -24,7 +29,16 @@ static PriceData s_data;
 static String s_vs;
 static uint32_t s_refreshMs;
 
-static int fetchJson(const String &url, JsonDocument &doc)
+// Big JSON documents go to PSRAM instead of the internal heap
+struct SpiRamAllocator
+{
+    void *allocate(size_t size) { return heap_caps_malloc(size, MALLOC_CAP_SPIRAM); }
+    void deallocate(void *ptr) { heap_caps_free(ptr); }
+    void *reallocate(void *ptr, size_t size) { return heap_caps_realloc(ptr, size, MALLOC_CAP_SPIRAM); }
+};
+using SpiRamJsonDocument = BasicJsonDocument<SpiRamAllocator>;
+
+static int fetchJson(const String &url, JsonDocument &doc, const JsonDocument *filter = nullptr)
 {
     WiFiClientSecure client;
     client.setInsecure(); // Public market data only, no credentials involved
@@ -41,7 +55,9 @@ static int fetchJson(const String &url, JsonDocument &doc)
     int code = http.GET();
     if (code == HTTP_CODE_OK)
     {
-        DeserializationError error = deserializeJson(doc, http.getStream());
+        DeserializationError error = filter
+            ? deserializeJson(doc, http.getStream(), DeserializationOption::Filter(filter->as<JsonVariantConst>()))
+            : deserializeJson(doc, http.getStream());
         if (error)
         {
             Serial.printf("Price: JSON error %s\n", error.c_str());
@@ -133,6 +149,93 @@ static int fetchChart()
     return code;
 }
 
+static int fetchDaily()
+{
+    // Hourly samples for 2-90 days: [timestamp ms, value]
+    String url = API_BASE "/coins/" COIN_ID "/market_chart?days=" + String(DAILY_HISTORY_DAYS) +
+                 "&precision=full&vs_currency=" + s_vs;
+
+    StaticJsonDocument<64> filter;
+    filter["prices"] = true;
+    filter["total_volumes"] = true;
+
+    SpiRamJsonDocument doc(DAILY_DOC_SIZE);
+    int code = fetchJson(url, doc, &filter);
+    if (code != HTTP_CODE_OK)
+        return code;
+
+    JsonArray prices = doc["prices"];
+    JsonArray volumes = doc["total_volumes"];
+    if (prices.size() < 2)
+        return ERR_DATA;
+
+    // Group the hourly prices into UTC day candles
+    const int maxDays = DAILY_HISTORY_DAYS + 4;
+    DailyBar days[maxDays];
+    long dayIds[maxDays];
+    int count = 0;
+    for (JsonArray sample : prices)
+    {
+        long id = (long)(sample[0].as<double>() / DAY_MS);
+        float value = sample[1].as<float>();
+        if (count == 0 || id != dayIds[count - 1])
+        {
+            if (count == maxDays) // Keep the newest days
+            {
+                memmove(days, days + 1, sizeof(DailyBar) * (maxDays - 1));
+                memmove(dayIds, dayIds + 1, sizeof(long) * (maxDays - 1));
+                count--;
+            }
+            days[count] = {value, value, value, value, 0, 0, 0};
+            dayIds[count++] = id;
+        }
+        else
+        {
+            DailyBar &day = days[count - 1];
+            day.high = max(day.high, value);
+            day.low = min(day.low, value);
+            day.close = value;
+        }
+    }
+    if (count < 2)
+        return ERR_DATA;
+
+    // total_volumes is a rolling 24h volume: keep the last sample of each day
+    int j = 0;
+    for (JsonArray sample : volumes)
+    {
+        long id = (long)(sample[0].as<double>() / DAY_MS);
+        while (j < count - 1 && dayIds[j] < id)
+            j++;
+        if (dayIds[j] == id)
+            days[j].volume = sample[1].as<float>();
+    }
+
+    // MACD(12,26,9) over the daily closes
+    float ema12 = days[0].close, ema26 = days[0].close, signal = 0;
+    for (int i = 0; i < count; i++)
+    {
+        float close = days[i].close;
+        ema12 += (close - ema12) * 2 / 13;
+        ema26 += (close - ema26) * 2 / 27;
+        float macd = ema12 - ema26;
+        signal = i == 0 ? macd : signal + (macd - signal) * 2 / 10;
+        days[i].macd = macd;
+        days[i].signal = signal;
+    }
+
+    int shown = min(count, DAILY_MAX_DAYS);
+    xSemaphoreTake(s_mutex, portMAX_DELAY);
+    memcpy(s_data.daily, days + count - shown, sizeof(DailyBar) * shown);
+    s_data.dailyCount = shown;
+    s_data.dailyValid = true;
+    xSemaphoreGive(s_mutex);
+
+    Serial.printf("Price: daily updated, %d days, MACD %.6f signal %.6f\n",
+                  shown, days[count - 1].macd, days[count - 1].signal);
+    return code;
+}
+
 static uint32_t nextDelay(int code, uint32_t okDelay)
 {
     if (code == HTTP_CODE_OK)
@@ -146,6 +249,7 @@ static void priceTask(void *)
 {
     uint32_t nextPrice = millis();
     uint32_t nextChart = millis();
+    uint32_t nextDaily = millis();
 
     for (;;)
     {
@@ -156,6 +260,9 @@ static void priceTask(void *)
 
             if ((int32_t)(millis() - nextChart) >= 0)
                 nextChart = millis() + nextDelay(fetchChart(), CHART_REFRESH_MS);
+
+            if ((int32_t)(millis() - nextDaily) >= 0)
+                nextDaily = millis() + nextDelay(fetchDaily(), DAILY_REFRESH_MS);
         }
         vTaskDelay(pdMS_TO_TICKS(500));
     }

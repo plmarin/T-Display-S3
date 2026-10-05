@@ -2,7 +2,8 @@
 
 Firmware para la **LilyGo T-Display S3** que convierte la placa en un **visor del precio de XRP** siempre encendido.
 Se conecta a tu WiFi, consulta la API pública de CoinGecko y muestra en la pantalla de 320x170 el precio actual,
-la variación de las últimas 24 horas, una gráfica del día, datos de mercado, la hora local y un calendario.
+la variación de las últimas 24 horas, una gráfica del día, velas diarias con volumen, el MACD diario, datos de mercado
+y la hora local.
 No hace falta clave de API ni ningún servidor propio: basta con la placa y un cable USB-C.
 
 Basado en [NerdMiner v2](https://github.com/BitMaker-hub/NerdMiner_v2) (licencia MIT). Se ha eliminado todo lo
@@ -14,8 +15,10 @@ La caja 3D original de NerdMiner para esta placa sigue en [3d_files](3d_files/).
 - **Precio de XRP en tiempo casi real** en la moneda que elijas (`usd`, `eur`, `btc`...), refrescado cada 60 s por defecto.
 - **Variación 24h** con flecha y color (verde si sube, rojo si baja), y **máximo/mínimo** del día.
 - **Gráfica de las últimas 24 horas** con 48 velas de 30 minutos, coloreada según la tendencia.
+- **Velas diarias de los últimos 30 días** con el volumen de cada día debajo.
+- **MACD diario (12, 26, 9)** con línea MACD, línea de señal e histograma.
 - **Datos de mercado**: capitalización, volumen 24h y hora del último dato.
-- **Reloj y calendario** sincronizados por NTP, con cambio de horario automático.
+- **Reloj** sincronizado por NTP, con cambio de horario automático.
 - **Configuración desde el móvil** mediante un portal WiFi propio, sin recompilar.
 - **Indicador de estado** que avisa si los datos están desactualizados o si se ha perdido la conexión.
 
@@ -43,9 +46,10 @@ La caja 3D original de NerdMiner para esta placa sigue en [3d_files](3d_files/).
 |---|----------|-----------|
 | 1 | Precio   | Precio actual en grande, variación 24h (verde/rojo), máximo y mínimo 24h |
 | 2 | Gráfica  | Evolución de las últimas 24h (velas de 30 min) con el rango y el precio actual |
-| 3 | Reloj    | Hora y fecha locales, con precio y variación en la cabecera |
-| 4 | Calendario | Hora de Madrid (con segundos y cambio de horario automático), fecha y calendario del mes con el día actual marcado |
-| 5 | Mercado  | Capitalización, volumen 24h, máx/mín, hora del último dato, señal WiFi e IP |
+| 3 | Velas diarias | Velas japonesas de los últimos 30 días (UTC), barras de volumen diario, rango y variación del día |
+| 4 | MACD diario | MACD (12, 26, 9) de los cierres diarios: línea MACD (azul), señal (ámbar), histograma y tendencia alcista/bajista |
+| 5 | Reloj    | Hora y fecha locales, con precio y variación en la cabecera |
+| 6 | Mercado  | Capitalización, volumen 24h, máx/mín, hora del último dato, señal WiFi e IP |
 
 El punto de la esquina superior derecha indica el estado: **verde** datos al día, **ámbar** datos de hace más de 5 min,
 **rojo** sin WiFi. Los puntos de la parte inferior indican la pantalla actual. La pantalla se queda fija
@@ -80,6 +84,9 @@ Se usa la API pública de [CoinGecko](https://www.coingecko.com/en/api), que no 
 
 - `simple/price?ids=ripple`: precio, variación 24h, capitalización y volumen, en cada refresco.
 - `coins/ripple/ohlc?days=1`: 48 velas de 30 minutos para la gráfica y el máx/mín, cada 10 minutos.
+- `coins/ripple/market_chart?days=60`: precios y volumen horarios de 60 días, cada 30 minutos. Se agrupan por día (UTC)
+  para formar las velas diarias. El volumen de cada día es el volumen de 24h al final del día. El MACD se calcula con
+  los 60 cierres para que las medias estén estabilizadas en los 30 días que se muestran.
 
 Si la API responde `429` (límite de peticiones), se espera 2 minutos antes de reintentar. Ante cualquier otro error se reintenta a los 30 s.
 
