@@ -26,7 +26,7 @@ La caja 3D original de NerdMiner para esta placa sigue en [3d_files](3d_files/).
 
 ## Cómo funciona
 
-1. **Arranque**: enciende la pantalla y muestra una animación corta (~1,7 s): caen los logos de XRP, XLM y VELO,
+1. **Arranque**: enciende la pantalla y muestra una animación corta (~3,4 s): caen los logos de XRP, XLM y VELO,
    aparece el nombre y se dibuja una línea de cotización. Después carga los ajustes guardados en la memoria flash (SPIFFS).
 2. **WiFi**: si no hay configuración (o se mantiene KEY pulsado), abre el portal `CryptoTickerAP` para elegir red y ajustes.
    Si no consigue conectarse, reinicia y vuelve a intentarlo.
@@ -58,7 +58,8 @@ o, si la API ha llegado a su límite, la cuenta atrás para reintentar.
 
 ### Pantallas de cada criptomoneda
 
-Con un doble clic en KEY se pasa del resumen a XRP, XLM y VELO, y de vuelta al resumen. Dentro de cada una, KEY pasa
+Con un doble clic en KEY se pasa del resumen a XRP, XLM y VELO, y de vuelta al resumen. Al entrar en una
+criptomoneda cae su logo y aparece su nombre (~1,2 s); mientras tanto se siguen descargando sus datos. Dentro de cada una, KEY pasa
 de una pantalla a otra:
 
 | # | Pantalla | Contenido |

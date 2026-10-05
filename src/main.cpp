@@ -39,7 +39,10 @@ static void nextScreen()
 static void nextCoin()
 {
     priceServiceNextCoin();
-    startLoading(); // Ends right away if the coin already has its data
+    int coin = priceServiceCoin();
+    if (coin != SUMMARY)
+        displayCoinAnimation(coin); // Its data keeps downloading meanwhile, on the other core
+    startLoading();                 // Ends right away if the coin already has its data
 }
 
 void setup()
