@@ -14,27 +14,32 @@
 #define LOAD_TIMEOUT_MS  (3 * MINUTE_MS)    // Show the screens anyway if some data never arrives
 
 // Button 1 (BOOT): click = screen on/off, double click = rotate 180
-// Button 2 (KEY):  click = next screen, double click = next coin (XRP, XLM, VELO), hold 5 s = erase config
+// Button 2 (KEY):  click = next screen, double click = next view (summary, XRP, XLM, VELO), hold 5 s = erase config
 //                  hold while booting = open config portal
 OneButton button1(PIN_BUTTON_1);
 OneButton button2(PIN_BUTTON_2);
 
 static unsigned long lastDraw = 0;
-static bool loading = true;   // First load of every coin, with the progress screen
+static bool loading = true;   // Progress screen until the current coin has its data
 static unsigned long loadStart = 0;
+
+static void startLoading()
+{
+    loading = true;
+    loadStart = millis();
+}
 
 static void nextScreen()
 {
-    if (!loading)
+    if (!loading && priceServiceCoin() != SUMMARY)
         displayNextScreen();
 }
 
+// Also works while loading, e.g. to go back to a coin already loaded while the API is rate limited
 static void nextCoin()
 {
-    if (loading)
-        return;
     priceServiceNextCoin();
-    displayRefresh();
+    startLoading(); // Ends right away if the coin already has its data
 }
 
 void setup()
@@ -64,7 +69,7 @@ void setup()
     configTzTime(Settings.Timezone, "pool.ntp.org", "time.google.com");
 
     priceServiceBegin(Settings);
-    loadStart = millis();
+    startLoading();
 }
 
 void loop()
@@ -76,7 +81,7 @@ void loop()
     unsigned long now = millis();
     if (loading)
     {
-        // XRP, XLM and VELO load in that order; then the main screen (XRP price) shows up
+        // Only when a coin is shown before its charts finished downloading in the background
         LoadProgress progress = priceServiceProgress();
         loading = progress.done < progress.total && now - loadStart < LOAD_TIMEOUT_MS;
         if (!loading)

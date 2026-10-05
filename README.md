@@ -12,7 +12,8 @@ La caja 3D original de NerdMiner para esta placa sigue en [3d_files](3d_files/).
 
 ## Qué hace
 
-- **Tres criptomonedas: XRP, XLM (Stellar) y VELO**, que se cambian con un doble clic en KEY.
+- **Tres criptomonedas: XRP, XLM (Stellar) y VELO**, con una pantalla de **resumen** de las tres como pantalla
+  principal. Con un doble clic en KEY se pasa del resumen a cada una de ellas.
 - **Precio en tiempo casi real** en la moneda que elijas (`usd`, `eur`, `btc`...), refrescado cada 60 s por defecto.
 - **Variación 24h** con flecha y color (verde si sube, rojo si baja), y **máximo/mínimo** del día.
 - **Gráfica de las últimas 24 horas** con 48 velas de 30 minutos, coloreada según la tendencia.
@@ -31,9 +32,11 @@ La caja 3D original de NerdMiner para esta placa sigue en [3d_files](3d_files/).
 3. **Hora**: sincroniza el reloj con `pool.ntp.org` / `time.google.com` usando la zona horaria configurada.
 4. **Datos**: una tarea en segundo plano (core 0, junto a la pila WiFi) consulta CoinGecko por HTTPS de forma periódica
    y guarda el último resultado protegido por un mutex.
-5. **Carga inicial**: se cargan los datos de XRP, XLM y VELO, en ese orden. Mientras tanto se ve el logo de la
-   criptomoneda que se está cargando y una barra con el progreso. Al terminar aparece la pantalla principal: el precio
-   de XRP. Si algún dato no llega en 3 minutos, se muestran las pantallas igualmente y se sigue reintentando.
+5. **Resumen y descarga en segundo plano**: al arrancar aparece el resumen, que se llena con los precios de las tres
+   criptomonedas (una sola petición). Mientras tanto se descargan las gráficas de las tres, de una en una y con 15 s
+   entre peticiones para no llegar al límite de la API. Si se elige una criptomoneda antes de que terminen sus gráficas,
+   se ve su logo con una barra de progreso mientras se cargan en ese momento. Si algún dato no llega en 3 minutos, se
+   muestran las pantallas igualmente y se sigue reintentando.
 6. **Pantalla**: el bucle principal (core 1) lee una copia de esos datos y redibuja la pantalla activa cada segundo
    sobre un sprite en PSRAM, de modo que la interfaz nunca se bloquea esperando a la red.
 
@@ -45,6 +48,17 @@ La caja 3D original de NerdMiner para esta placa sigue en [3d_files](3d_files/).
 - Funciona por USB-C o con batería LiPo (el firmware activa el GPIO15 para alimentar la pantalla con batería).
 
 ## Pantallas
+
+### Resumen (pantalla principal)
+
+Una fila por criptomoneda con su logo, el precio, la variación 24h, la capitalización y una mini gráfica de las
+últimas 24h (cuando ya se ha descargado). Abajo se ve el avance de la descarga de gráficas en segundo plano (`4/6`)
+o, si la API ha llegado a su límite, la cuenta atrás para reintentar.
+
+### Pantallas de cada criptomoneda
+
+Con un doble clic en KEY se pasa del resumen a XRP, XLM y VELO, y de vuelta al resumen. Dentro de cada una, KEY pasa
+de una pantalla a otra:
 
 | # | Pantalla | Contenido |
 |---|----------|-----------|
@@ -66,7 +80,7 @@ hasta que pulses KEY para pasar a la siguiente.
 | BOOT (GPIO0), pulsación | Apagar/encender pantalla |
 | BOOT (GPIO0), doble pulsación | Girar la pantalla 180° |
 | KEY (GPIO14), pulsación | Siguiente pantalla |
-| KEY (GPIO14), doble pulsación | Siguiente criptomoneda: XRP → XLM → VELO → XRP |
+| KEY (GPIO14), doble pulsación | Siguiente vista: Resumen → XRP → XLM → VELO → Resumen |
 | KEY (GPIO14), mantener 5 s | Borrar configuración y WiFi, y reiniciar |
 | KEY (GPIO14), mantener al arrancar | Abrir el portal de configuración |
 
@@ -82,7 +96,7 @@ En el primer arranque (o manteniendo KEY al encender) la placa crea la red WiFi 
 | Zona horaria | `CET-1CEST,M3.5.0,M10.5.0/3` | Formato POSIX TZ, con cambio de horario automático. Canarias: `WET0WEST,M3.5.0/1,M10.5.0` |
 
 Los ajustes se guardan en SPIFFS (`/xrp_config.json`) y las credenciales WiFi las guarda WiFiManager.
-Al encender siempre se empieza por XRP.
+Al encender siempre se empieza por el resumen.
 
 ## Datos
 
@@ -96,12 +110,16 @@ criptomonedas son `ripple` (XRP), `stellar` (XLM) y `velo` (VELO); en las rutas 
   para formar las velas diarias. El volumen de cada día es el volumen de 24h al final del día. El MACD se calcula con
   los 60 cierres para que las medias estén estabilizadas en los 30 días que se muestran.
 
-Al arrancar se cargan las gráficas de las tres criptomonedas (7 peticiones en total). Después solo se refrescan las
-gráficas de la que está en pantalla. Los datos de cada una se guardan en memoria, así que al cambiar de criptomoneda
-aparecen al momento y solo se piden de nuevo cuando toca refrescarlos.
+Al arrancar se piden los precios de las tres criptomonedas en una sola petición, y después, en segundo plano y con
+15 s de separación, las 6 gráficas (24h y diaria de cada una). Si se elige una criptomoneda cuyas gráficas aún no han
+llegado, se piden en ese momento. Una vez descargadas, solo se refrescan las gráficas de la criptomoneda que está en
+pantalla; en el resumen solo se refrescan los precios. Los datos de cada una se guardan en memoria, así que al cambiar
+a una que ya se ha cargado aparece al momento.
 
-Si la API responde `429` (límite de peticiones), se paran todas las peticiones durante 2 minutos. Ante cualquier otro
-error se reintenta a los 30 s.
+Si la API responde `429` (límite de peticiones), se paran todas las peticiones durante el tiempo que indique la
+cabecera `Retry-After` (entre 5 s y 10 min), o 2 minutos si no la envía. La pantalla de carga muestra la cuenta atrás.
+Mientras tanto se puede volver con el doble clic a una criptomoneda ya cargada. Ante cualquier otro error se reintenta
+a los 30 s.
 
 ## Compilar y flashear
 

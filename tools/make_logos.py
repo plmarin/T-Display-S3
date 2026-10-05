@@ -18,7 +18,7 @@ COINS = [
     ("XLM", "https://coin-images.coingecko.com/coins/images/100/large/fmpFRHHQ_400x400.jpg", True),
     ("VELO", "https://coin-images.coingecko.com/coins/images/12538/large/Logo_200x_200.png", False),
 ]
-SIZES = {"LARGE": 64, "SMALL": 20}
+SIZES = {"LARGE": 64, "MEDIUM": 32, "SMALL": 20}
 SUPERSAMPLE = 4
 GLYPH_SCALE = 0.78  # Glyph size inside the white disc
 

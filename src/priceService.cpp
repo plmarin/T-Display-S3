@@ -18,7 +18,10 @@
 #define DAILY_DOC_SIZE      (256 * 1024)  // ~1440 hourly prices + volumes, kept in PSRAM
 #define DAY_MS              86400000.0
 #define RETRY_MS            (30 * SECOND_MS)
-#define RATE_LIMIT_MS       (2 * MINUTE_MS)
+#define BACKGROUND_GAP_MS   (15 * SECOND_MS)  // Between background chart downloads, to stay under the rate limit
+#define RATE_LIMIT_MS       (2 * MINUTE_MS)   // Wait after a 429 when the API does not send Retry-After
+#define MIN_RETRY_AFTER_MS  (5 * SECOND_MS)
+#define MAX_RETRY_AFTER_MS  (10 * MINUTE_MS)
 
 #define ERR_PARSE           -100
 #define ERR_DATA            -101
@@ -47,8 +50,10 @@ static SemaphoreHandle_t s_mutex;
 static PriceData s_data[COIN_COUNT];   // Cached per coin, so switching back shows data right away
 static CoinTimers s_timers[COIN_COUNT];
 static Timer s_priceTimer;             // One request brings the price of every coin
+static Timer s_backgroundTimer;        // Spaces the background chart downloads
 static Timer s_rateLimit;              // A 429 pauses every request, whatever the coin
-static volatile int s_coin = 0;
+static uint32_t s_retryAfterMs = 0;    // Wait asked by the last 429 (Retry-After), 0 if none
+static volatile int s_coin = SUMMARY;
 static String s_vs;
 static uint32_t s_refreshMs;
 
@@ -85,8 +90,15 @@ static int fetchJson(const String &url, JsonDocument &doc, const JsonDocument *f
 
     http.setUserAgent(APP_NAME "/" CURRENT_VERSION);
     http.addHeader("Accept", "application/json");
+    const char *headers[] = {"Retry-After"};
+    http.collectHeaders(headers, 1);
 
     int code = http.GET();
+    if (code == HTTP_CODE_TOO_MANY_REQUESTS)
+    {
+        long seconds = http.header("Retry-After").toInt();
+        s_retryAfterMs = seconds > 0 ? constrain(seconds * SECOND_MS, MIN_RETRY_AFTER_MS, MAX_RETRY_AFTER_MS) : 0;
+    }
     if (code == HTTP_CODE_OK)
     {
         DeserializationError error = filter
@@ -292,8 +304,10 @@ static uint32_t nextDelay(int c, int code, uint32_t okDelay)
     setError(c, code);
     if (code == HTTP_CODE_TOO_MANY_REQUESTS)
     {
-        schedule(s_rateLimit, RATE_LIMIT_MS);
-        return RATE_LIMIT_MS;
+        uint32_t wait = s_retryAfterMs ? s_retryAfterMs : RATE_LIMIT_MS;
+        Serial.printf("Price: rate limited, waiting %lu s\n", (unsigned long)(wait / SECOND_MS));
+        schedule(s_rateLimit, wait);
+        return wait;
     }
     return RETRY_MS;
 }
@@ -308,16 +322,26 @@ static bool poll(int c, Timer &timer, int (*fetch)(int), uint32_t okDelay)
     return true;
 }
 
-static bool loaded(int c)
+// Downloads one missing chart of a coin not on screen; returns false if nothing was due
+static bool backgroundStep(int current)
 {
-    return s_data[c].valid && s_data[c].chartValid && s_data[c].dailyValid;
-}
-
-static bool pollCoin(int c)
-{
-    CoinTimers &timers = s_timers[c];
-    return poll(c, timers.chart, fetchChart, CHART_REFRESH_MS) &&
-           poll(c, timers.daily, fetchDaily, DAILY_REFRESH_MS);
+    for (int c = 0; c < COIN_COUNT; c++)
+    {
+        if (c == current)
+            continue;
+        CoinTimers &timers = s_timers[c];
+        if (!s_data[c].chartValid && due(timers.chart))
+        {
+            poll(c, timers.chart, fetchChart, CHART_REFRESH_MS);
+            return true;
+        }
+        if (!s_data[c].dailyValid && due(timers.daily))
+        {
+            poll(c, timers.daily, fetchDaily, DAILY_REFRESH_MS);
+            return true;
+        }
+    }
+    return false;
 }
 
 static void priceTask(void *)
@@ -326,15 +350,18 @@ static void priceTask(void *)
     {
         if (WiFi.status() == WL_CONNECTED)
         {
-            // Prices of every coin, the charts of the coin on screen, then the charts of the
-            // coins never loaded yet (XRP, XLM, VELO in order at boot) so switching is instant
+            // Prices of every coin in one request, then the charts of the coin on screen (if any),
+            // then, one at a time and spaced out, the charts the other coins are still missing
             int c = s_coin;
-            if (poll(ALL_COINS, s_priceTimer, fetchPrices, s_refreshMs) && pollCoin(c))
+            bool ok = poll(ALL_COINS, s_priceTimer, fetchPrices, s_refreshMs);
+            if (ok && c != SUMMARY)
             {
-                for (int i = 0; i < COIN_COUNT; i++)
-                    if (i != c && !loaded(i) && !pollCoin(i))
-                        break;
+                CoinTimers &timers = s_timers[c];
+                ok = poll(c, timers.chart, fetchChart, CHART_REFRESH_MS) &&
+                     poll(c, timers.daily, fetchDaily, DAILY_REFRESH_MS);
             }
+            if (ok && due(s_backgroundTimer) && backgroundStep(c))
+                schedule(s_backgroundTimer, BACKGROUND_GAP_MS);
         }
         vTaskDelay(pdMS_TO_TICKS(500));
     }
@@ -362,36 +389,74 @@ void priceServiceBegin(const TSettings &settings)
 
 void priceServiceNextCoin()
 {
-    s_coin = (s_coin + 1) % COIN_COUNT;
-    Serial.printf("Price: switched to %s\n", COINS[s_coin].symbol);
+    s_coin = s_coin + 1 < COIN_COUNT ? s_coin + 1 : SUMMARY;
+    Serial.printf("Price: switched to %s\n", s_coin == SUMMARY ? "summary" : COINS[s_coin].symbol);
+}
+
+int priceServiceCoin()
+{
+    return s_coin;
+}
+
+static int rateLimitWaitSec()
+{
+    if (due(s_rateLimit))
+        return 0;
+    uint32_t elapsed = millis() - s_rateLimit.start;
+    return (s_rateLimit.wait - elapsed + SECOND_MS - 1) / SECOND_MS;
 }
 
 LoadProgress priceServiceProgress()
 {
-    LoadProgress progress{0, COIN_COUNT * 3, COIN_COUNT - 1, 0, !due(s_rateLimit)};
-    bool found = false;
+    int c = s_coin;
+    if (c == SUMMARY) // The summary fills in as the prices arrive, no loading screen
+        return LoadProgress{1, 1, SUMMARY, 0, 0};
+
+    LoadProgress progress{0, 3, c, 0, rateLimitWaitSec()};
     xSemaphoreTake(s_mutex, portMAX_DELAY);
+    const PriceData &d = s_data[c];
+    progress.done = d.valid + d.chartValid + d.dailyValid;
+    progress.lastError = d.lastError;
+    xSemaphoreGive(s_mutex);
+    return progress;
+}
+
+Summary priceServiceSummary()
+{
+    Summary summary;
+    summary.chartsLoaded = 0;
+    summary.lastError = 0;
+    summary.waitSec = rateLimitWaitSec();
+
+    xSemaphoreTake(s_mutex, portMAX_DELAY);
+    strlcpy(summary.currency, s_data[0].currency, sizeof(summary.currency));
     for (int c = 0; c < COIN_COUNT; c++)
     {
         const PriceData &d = s_data[c];
-        int steps = d.valid + d.chartValid + d.dailyValid;
-        progress.done += steps;
-        if (steps < 3 && !found)
-        {
-            progress.coin = c;
-            progress.lastError = d.lastError;
-            found = true;
-        }
+        CoinSummary &coin = summary.coins[c];
+        coin.valid = d.valid;
+        coin.price = d.price;
+        coin.change24h = d.change24h;
+        coin.marketCap = d.marketCap;
+        coin.fetchedMs = d.fetchedMs;
+        coin.chartValid = d.chartValid;
+        coin.dailyValid = d.dailyValid;
+        coin.chartCount = d.chartCount;
+        memcpy(coin.chart, d.chart, sizeof(coin.chart));
+        summary.chartsLoaded += d.chartValid + d.dailyValid;
+        if (d.lastError != 0)
+            summary.lastError = d.lastError;
     }
     xSemaphoreGive(s_mutex);
-    return progress;
+    return summary;
 }
 
 PriceData priceServiceGet()
 {
     PriceData copy;
+    int c = s_coin;
     xSemaphoreTake(s_mutex, portMAX_DELAY);
-    copy = s_data[s_coin];
+    copy = s_data[c == SUMMARY ? 0 : c];
     xSemaphoreGive(s_mutex);
     return copy;
 }

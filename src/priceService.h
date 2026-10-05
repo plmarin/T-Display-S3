@@ -14,6 +14,7 @@ struct Coin
 };
 
 #define COIN_COUNT 3
+#define SUMMARY    -1      // "Coin" of the summary view, which shows every coin
 extern const Coin COINS[COIN_COUNT];
 
 struct DailyBar
@@ -49,21 +50,50 @@ struct PriceData
     uint8_t coin;          // index in COINS
 };
 
-struct LoadProgress
+struct CoinSummary
 {
-    int done, total;       // steps loaded: price, 24h chart and daily data of every coin
-    int coin;              // coin being loaded (the first one still missing data)
-    int lastError;         // last error of that coin, 0 if none
-    bool rateLimited;      // waiting because the API answered 429
+    bool valid;            // price fields hold real data
+    double price;
+    double change24h;      // percent
+    double marketCap;
+    uint32_t fetchedMs;    // millis() of the last successful price fetch
+    bool chartValid;       // chart holds the 24h closes
+    bool dailyValid;
+    uint8_t chartCount;
+    float chart[CHART_MAX_POINTS];
 };
 
-// Starts the background task that polls CoinGecko. It starts on XRP and preloads every coin.
+struct Summary
+{
+    CoinSummary coins[COIN_COUNT];
+    char currency[8];
+    int chartsLoaded;      // 24h and daily charts already downloaded, out of 2 * COIN_COUNT
+    int lastError;         // last error of any request, 0 if none
+    int waitSec;           // seconds left before retrying after a 429, 0 if not rate limited
+};
+
+struct LoadProgress
+{
+    int done, total;       // steps loaded for the current coin: price, 24h chart and daily data
+    int coin;              // current coin
+    int lastError;         // last error of that coin, 0 if none
+    int waitSec;           // seconds left before retrying after a 429, 0 if not rate limited
+};
+
+// Starts the background task that polls CoinGecko, starting on the summary
 void priceServiceBegin(const TSettings &settings);
 
-// Switches to the next coin. Data already fetched for it is shown right away.
+// Cycles summary -> XRP -> XLM -> VELO -> summary. The charts of every coin download in the background,
+// a coin shown before that loads them right away.
 void priceServiceNextCoin();
 
-// How far the first load of every coin has gone
+// Current coin index, or SUMMARY
+int priceServiceCoin();
+
+// Thread safe snapshot of every coin for the summary view
+Summary priceServiceSummary();
+
+// How far the data of the current coin has loaded
 LoadProgress priceServiceProgress();
 
 // Thread safe snapshot of the latest data for the current coin
