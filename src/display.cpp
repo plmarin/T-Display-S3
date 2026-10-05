@@ -10,6 +10,7 @@
 #include "timeconst.h"
 #include "priceService.h"
 #include "media/fonts.h"
+#include "media/logos.h"
 
 #define RGB565(r, g, b) (uint16_t)((((r) & 0xF8) << 8) | (((g) & 0xFC) << 3) | ((b) >> 3))
 
@@ -93,43 +94,44 @@ static bool localNow(struct tm &out)
     return true;
 }
 
-// Approximation of the XRP mark: two mirrored curved chevrons
-static void drawXrpLogo(int cx, int cy, int r, uint16_t color, uint16_t bg)
+struct Logo
 {
-    const float a = r * 0.85f;
-    const float gap = r * 0.2f;
-    const float width = max(2.0f, r * 0.24f);
-    const int steps = 10;
+    const uint16_t *rgb;
+    const uint8_t *alpha;
+};
 
-    for (int side = -1; side <= 1; side += 2) // -1 upper chevron, +1 lower chevron
+// Same order as COINS (priceService.cpp)
+static const Logo LOGOS_LARGE[] = {
+    {LOGO_XRP_LARGE_RGB, LOGO_XRP_LARGE_ALPHA},
+    {LOGO_XLM_LARGE_RGB, LOGO_XLM_LARGE_ALPHA},
+    {LOGO_VELO_LARGE_RGB, LOGO_VELO_LARGE_ALPHA},
+};
+static const Logo LOGOS_SMALL[] = {
+    {LOGO_XRP_SMALL_RGB, LOGO_XRP_SMALL_ALPHA},
+    {LOGO_XLM_SMALL_RGB, LOGO_XLM_SMALL_ALPHA},
+    {LOGO_VELO_SMALL_RGB, LOGO_VELO_SMALL_ALPHA},
+};
+static_assert(sizeof(LOGOS_LARGE) / sizeof(Logo) == COIN_COUNT, "Add the new coin to tools/make_logos.py");
+
+// Blends the coin logo over whatever is already drawn, x/y is the top left corner
+static void drawLogo(int coin, bool large, int x, int y)
+{
+    const Logo &logo = large ? LOGOS_LARGE[coin] : LOGOS_SMALL[coin];
+    const int size = large ? LOGO_LARGE : LOGO_SMALL;
+    for (int j = 0; j < size; j++)
     {
-        float x0 = cx - a, y0 = cy + side * a;
-        float x1 = cx,     y1 = cy - side * (a - 2 * gap);
-        float x2 = cx + a, y2 = cy + side * a;
-
-        float px = x0, py = y0;
-        for (int i = 1; i <= steps; i++)
+        for (int i = 0; i < size; i++)
         {
-            float t = (float)i / steps, u = 1 - t;
-            float x = u * u * x0 + 2 * u * t * x1 + t * t * x2;
-            float y = u * u * y0 + 2 * u * t * y1 + t * t * y2;
-            spr.drawWideLine(px, py, x, y, width, color, bg);
-            px = x;
-            py = y;
+            int k = j * size + i;
+            uint8_t alpha = logo.alpha[k];
+            if (alpha == 0)
+                continue;
+            uint16_t color = logo.rgb[k];
+            if (alpha < 255)
+                color = tft.alphaBlend(alpha, color, spr.readPixel(x + i, y + j));
+            spr.drawPixel(x + i, y + j, color);
         }
     }
-}
-
-// XRP mark for XRP, a round badge with the initial for the other coins
-static void drawCoinLogo(const char *symbol, int cx, int cy, int r, uint16_t color, uint16_t bg)
-{
-    if (strcmp(symbol, "XRP") == 0)
-        return drawXrpLogo(cx, cy, r, color, bg);
-
-    spr.fillSmoothCircle(cx, cy, r, color, bg);
-    char initial[2] = {symbol[0], '\0'};
-    int size = r * 3 / 2;
-    text(initial, cx, cy - size * 6 / 10, size, bg, color, TA_CENTER);
 }
 
 // Coloured triangle + percentage, anchored at x according to align
@@ -170,7 +172,7 @@ static void drawWaiting(const PriceData &d)
 static void drawHeader(const PriceData &d, bool showClock)
 {
     spr.fillRect(0, 0, SCREEN_WIDTH, HEADER_H, COL_PANEL);
-    drawCoinLogo(d.symbol, 14, 12, 8, COL_TEXT, COL_PANEL);
+    drawLogo(d.coin, false, 4, (HEADER_H - LOGO_SMALL) / 2);
 
     char pair[20];
     snprintf(pair, sizeof(pair), "%s / %s", d.symbol, d.currency);
@@ -541,17 +543,48 @@ void displayInit()
 void displayLoadingScreen(const char *status)
 {
     spr.fillSprite(COL_BG);
-    drawXrpLogo(SCREEN_WIDTH / 2, 56, 30, COL_TEXT, COL_BG);
+    drawLogo(0, true, (SCREEN_WIDTH - LOGO_LARGE) / 2, 24);
     text(APP_NAME, SCREEN_WIDTH / 2, 96, 26, COL_TEXT, COL_BG, TA_CENTER);
     text(status, SCREEN_WIDTH / 2, 134, 14, COL_MUTED, COL_BG, TA_CENTER);
     text(CURRENT_VERSION, SCREEN_WIDTH - 8, 154, 11, COL_GRID, COL_BG, TA_RIGHT);
     spr.pushSprite(0, 0);
 }
 
+void displayLoadProgress(const LoadProgress &progress)
+{
+    // Eased towards the real progress, so the bar grows smoothly between requests
+    static float shown = 0;
+    shown += ((float)progress.done / progress.total - shown) * 0.15f;
+
+    spr.fillSprite(COL_BG);
+    const char *symbol = COINS[progress.coin].symbol;
+    drawLogo(progress.coin, true, (SCREEN_WIDTH - LOGO_LARGE) / 2, 14);
+    text(symbol, SCREEN_WIDTH / 2, 84, 22, COL_TEXT, COL_BG, TA_CENTER);
+
+    char buf[40];
+    if (WiFi.status() != WL_CONNECTED)
+        snprintf(buf, sizeof(buf), "Sin conexion WiFi");
+    else if (progress.rateLimited)
+        snprintf(buf, sizeof(buf), "Limite de la API, esperando...");
+    else if (progress.lastError != 0)
+        snprintf(buf, sizeof(buf), "Error API (%d), reintentando", progress.lastError);
+    else
+        snprintf(buf, sizeof(buf), "Cargando datos de %s...", symbol);
+    text(buf, SCREEN_WIDTH / 2, 114, 13, COL_MUTED, COL_BG, TA_CENTER);
+
+    const int x = 40, y = 138, w = SCREEN_WIDTH - 2 * x, h = 6;
+    spr.fillSmoothRoundRect(x, y, w, h, h / 2, COL_PANEL, COL_BG);
+    spr.fillSmoothRoundRect(x, y, max(h, (int)(w * shown)), h, h / 2, COL_UP, COL_BG);
+
+    snprintf(buf, sizeof(buf), "%d%%", (int)(shown * 100 + 0.5f));
+    text(buf, SCREEN_WIDTH / 2, 150, 11, COL_MUTED, COL_BG, TA_CENTER);
+    spr.pushSprite(0, 0);
+}
+
 void displaySetupScreen(const char *apName, const char *apPassword)
 {
     spr.fillSprite(COL_BG);
-    drawXrpLogo(24, 22, 13, COL_TEXT, COL_BG);
+    drawLogo(0, false, 14, 12);
     text("Configuracion", 48, 9, 22, COL_TEXT, COL_BG);
 
     const char *labels[] = {"Red WiFi", "Clave", "Web"};

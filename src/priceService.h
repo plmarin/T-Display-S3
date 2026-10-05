@@ -46,13 +46,25 @@ struct PriceData
     int lastError;         // HTTP code (or negative) of the last failed request, 0 if none
     char currency[8];      // upper case, e.g. "USD"
     const char *symbol;    // coin shown, e.g. "XRP"
+    uint8_t coin;          // index in COINS
 };
 
-// Starts the background task that polls CoinGecko for the coin selected in the settings
+struct LoadProgress
+{
+    int done, total;       // steps loaded: price, 24h chart and daily data of every coin
+    int coin;              // coin being loaded (the first one still missing data)
+    int lastError;         // last error of that coin, 0 if none
+    bool rateLimited;      // waiting because the API answered 429
+};
+
+// Starts the background task that polls CoinGecko. It starts on XRP and preloads every coin.
 void priceServiceBegin(const TSettings &settings);
 
-// Switches to the next coin and returns its symbol. Data already fetched for it is shown right away.
-const char *priceServiceNextCoin();
+// Switches to the next coin. Data already fetched for it is shown right away.
+void priceServiceNextCoin();
+
+// How far the first load of every coin has gone
+LoadProgress priceServiceProgress();
 
 // Thread safe snapshot of the latest data for the current coin
 PriceData priceServiceGet();

@@ -31,7 +31,10 @@ La caja 3D original de NerdMiner para esta placa sigue en [3d_files](3d_files/).
 3. **Hora**: sincroniza el reloj con `pool.ntp.org` / `time.google.com` usando la zona horaria configurada.
 4. **Datos**: una tarea en segundo plano (core 0, junto a la pila WiFi) consulta CoinGecko por HTTPS de forma periódica
    y guarda el último resultado protegido por un mutex.
-5. **Pantalla**: el bucle principal (core 1) lee una copia de esos datos y redibuja la pantalla activa cada segundo
+5. **Carga inicial**: se cargan los datos de XRP, XLM y VELO, en ese orden. Mientras tanto se ve el logo de la
+   criptomoneda que se está cargando y una barra con el progreso. Al terminar aparece la pantalla principal: el precio
+   de XRP. Si algún dato no llega en 3 minutos, se muestran las pantallas igualmente y se sigue reintentando.
+6. **Pantalla**: el bucle principal (core 1) lee una copia de esos datos y redibuja la pantalla activa cada segundo
    sobre un sprite en PSRAM, de modo que la interfaz nunca se bloquea esperando a la red.
 
 ## Hardware
@@ -79,21 +82,23 @@ En el primer arranque (o manteniendo KEY al encender) la placa crea la red WiFi 
 | Zona horaria | `CET-1CEST,M3.5.0,M10.5.0/3` | Formato POSIX TZ, con cambio de horario automático. Canarias: `WET0WEST,M3.5.0/1,M10.5.0` |
 
 Los ajustes se guardan en SPIFFS (`/xrp_config.json`) y las credenciales WiFi las guarda WiFiManager.
-La criptomoneda elegida con el doble clic también se guarda ahí, así que se mantiene al reiniciar.
+Al encender siempre se empieza por XRP.
 
 ## Datos
 
 Se usa la API pública de [CoinGecko](https://www.coingecko.com/en/api), que no necesita clave. Los IDs de las
 criptomonedas son `ripple` (XRP), `stellar` (XLM) y `velo` (VELO); en las rutas de abajo aparece `{id}`:
 
-- `simple/price?ids={id}`: precio, variación 24h, capitalización y volumen, en cada refresco.
+- `simple/price?ids=ripple,stellar,velo`: precio, variación 24h, capitalización y volumen de las tres a la vez,
+  en cada refresco.
 - `coins/{id}/ohlc?days=1`: 48 velas de 30 minutos para la gráfica y el máx/mín, cada 10 minutos.
 - `coins/{id}/market_chart?days=60`: precios y volumen horarios de 60 días, cada 30 minutos. Se agrupan por día (UTC)
   para formar las velas diarias. El volumen de cada día es el volumen de 24h al final del día. El MACD se calcula con
   los 60 cierres para que las medias estén estabilizadas en los 30 días que se muestran.
 
-Solo se consulta la criptomoneda que está en pantalla. Los datos de cada una se guardan en memoria, así que al volver
-a una que ya se ha visto aparecen al momento y solo se piden de nuevo cuando toca refrescarlos.
+Al arrancar se cargan las gráficas de las tres criptomonedas (7 peticiones en total). Después solo se refrescan las
+gráficas de la que está en pantalla. Los datos de cada una se guardan en memoria, así que al cambiar de criptomoneda
+aparecen al momento y solo se piden de nuevo cuando toca refrescarlos.
 
 Si la API responde `429` (límite de peticiones), se paran todas las peticiones durante 2 minutos. Ante cualquier otro
 error se reintenta a los 30 s.
@@ -120,6 +125,8 @@ src/
   priceService.cpp  tarea en segundo plano que consulta CoinGecko
   display.cpp       pantallas (TFT_eSPI + OpenFontRender)
   media/fonts.h     fuente NotoSans Bold embebida
+  media/logos.h     logos de XRP, XLM y VELO (generado por tools/make_logos.py)
+tools/make_logos.py descarga los logos de CoinGecko y genera media/logos.h (necesita Pillow)
 platformio.ini      dependencias y configuración de TFT_eSPI para la T-Display S3 (pines, driver)
 3d_files/           caja imprimible en 3D (de NerdMiner)
 ```

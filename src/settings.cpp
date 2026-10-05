@@ -60,12 +60,11 @@ bool loadSettings(TSettings &settings)
 
     strlcpy(settings.Timezone, json["timezone"] | DEFAULT_TIMEZONE, sizeof(settings.Timezone));
     strlcpy(settings.Currency, json["currency"] | DEFAULT_CURRENCY, sizeof(settings.Currency));
-    strlcpy(settings.Coin, json["coin"] | DEFAULT_COIN, sizeof(settings.Coin));
     settings.RefreshSec = json["refresh"] | DEFAULT_REFRESH_S;
     sanitizeSettings(settings);
 
-    Serial.printf("Settings: tz=%s currency=%s coin=%s refresh=%ds\n",
-                  settings.Timezone, settings.Currency, settings.Coin, settings.RefreshSec);
+    Serial.printf("Settings: tz=%s currency=%s refresh=%ds\n",
+                  settings.Timezone, settings.Currency, settings.RefreshSec);
     return true;
 }
 
@@ -77,7 +76,6 @@ bool saveSettings(const TSettings &settings)
     StaticJsonDocument<256> json;
     json["timezone"] = settings.Timezone;
     json["currency"] = settings.Currency;
-    json["coin"] = settings.Coin;
     json["refresh"] = settings.RefreshSec;
 
     File file = SPIFFS.open(CONFIG_FILE, "w");
