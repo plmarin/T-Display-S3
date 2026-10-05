@@ -12,10 +12,12 @@
 #define REDRAW_MS        SECOND_MS
 #define LOAD_FRAME_MS    40                 // Progress bar animation
 #define LOAD_TIMEOUT_MS  (3 * MINUTE_MS)    // Show the screens anyway if some data never arrives
+#define COIN_PRESS_MS    800                // KEY long press that switches the view
+#define RESET_PRESS_MS   (5 * SECOND_MS)    // KEY long press that erases the config
 
 // Button 1 (BOOT): click = screen on/off, double click = rotate 180
-// Button 2 (KEY):  click = next screen, double click = next view (summary, XRP, XLM, VELO), hold 5 s = erase config
-//                  hold while booting = open config portal
+// Button 2 (KEY):  click = next screen, hold ~1 s and release = next view (summary, XRP, XLM, VELO),
+//                  hold 5 s = erase config, hold while booting = open config portal
 OneButton button1(PIN_BUTTON_1);
 OneButton button2(PIN_BUTTON_2);
 
@@ -45,6 +47,19 @@ static void nextCoin()
     startLoading();                 // Ends right away if the coin already has its data
 }
 
+// The view switches on release, so holding KEY to erase the config does not switch it on the way
+static void keyLongPressStop()
+{
+    if (button2.getPressedMs() < RESET_PRESS_MS)
+        nextCoin();
+}
+
+static void keyDuringLongPress()
+{
+    if (button2.getPressedMs() >= RESET_PRESS_MS)
+        reset_configuration(); // Restarts
+}
+
 void setup()
 {
     // Display power when running from battery (LilyGo quirk)
@@ -59,10 +74,10 @@ void setup()
     button1.attachClick(displayToggleBacklight);
     button1.attachDoubleClick(displayFlipRotation);
 
-    button2.setPressMs(5 * SECOND_MS);
+    button2.setPressMs(COIN_PRESS_MS);
     button2.attachClick(nextScreen);
-    button2.attachDoubleClick(nextCoin);
-    button2.attachLongPressStart(reset_configuration);
+    button2.attachLongPressStop(keyLongPressStop);
+    button2.attachDuringLongPress(keyDuringLongPress);
 
     displayInit();
     displayBootAnimation();

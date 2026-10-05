@@ -606,7 +606,7 @@ static void screenSummary()
     else if (s.chartsLoaded < total)
         snprintf(buf, sizeof(buf), "Descargando graficas %d/%d", s.chartsLoaded, total);
     else
-        snprintf(buf, sizeof(buf), "Doble clic en KEY para ver cada moneda");
+        snprintf(buf, sizeof(buf), "Manten KEY 1 s para ver cada moneda");
     text(buf, 8, 150, 11, COL_MUTED, COL_BG);
 
     if (s.chartsLoaded < total)
