@@ -10,6 +10,7 @@
 #include "timeconst.h"
 #include "priceService.h"
 #include "media/fonts.h"
+#include "media/logos.h"
 
 #define RGB565(r, g, b) (uint16_t)((((r) & 0xF8) << 8) | (((g) & 0xFC) << 3) | ((b) >> 3))
 
@@ -68,7 +69,7 @@ static int fitSize(const char *str, int maxSize, int maxWidth)
 
 static void fmtPrice(double price, char *buf, size_t len)
 {
-    int decimals = price >= 100 ? 2 : price >= 1 ? 4 : price >= 0.01 ? 5 : 8;
+    int decimals = price >= 100 ? 2 : price >= 1 ? 4 : price >= 0.01 ? 5 : price >= 0.0001 ? 6 : 8;
     snprintf(buf, len, "%.*f", decimals, price);
 }
 
@@ -93,29 +94,47 @@ static bool localNow(struct tm &out)
     return true;
 }
 
-// Approximation of the XRP mark: two mirrored curved chevrons
-static void drawXrpLogo(int cx, int cy, int r, uint16_t color, uint16_t bg)
+struct Logo
 {
-    const float a = r * 0.85f;
-    const float gap = r * 0.2f;
-    const float width = max(2.0f, r * 0.24f);
-    const int steps = 10;
+    const uint16_t *rgb;
+    const uint8_t *alpha;
+};
 
-    for (int side = -1; side <= 1; side += 2) // -1 upper chevron, +1 lower chevron
+// Same order as COINS (priceService.cpp)
+static const Logo LOGOS_LARGE[] = {
+    {LOGO_XRP_LARGE_RGB, LOGO_XRP_LARGE_ALPHA},
+    {LOGO_XLM_LARGE_RGB, LOGO_XLM_LARGE_ALPHA},
+    {LOGO_VELO_LARGE_RGB, LOGO_VELO_LARGE_ALPHA},
+};
+static const Logo LOGOS_MEDIUM[] = {
+    {LOGO_XRP_MEDIUM_RGB, LOGO_XRP_MEDIUM_ALPHA},
+    {LOGO_XLM_MEDIUM_RGB, LOGO_XLM_MEDIUM_ALPHA},
+    {LOGO_VELO_MEDIUM_RGB, LOGO_VELO_MEDIUM_ALPHA},
+};
+static const Logo LOGOS_SMALL[] = {
+    {LOGO_XRP_SMALL_RGB, LOGO_XRP_SMALL_ALPHA},
+    {LOGO_XLM_SMALL_RGB, LOGO_XLM_SMALL_ALPHA},
+    {LOGO_VELO_SMALL_RGB, LOGO_VELO_SMALL_ALPHA},
+};
+static_assert(sizeof(LOGOS_LARGE) / sizeof(Logo) == COIN_COUNT, "Add the new coin to tools/make_logos.py");
+
+// Blends the coin logo (from one of the LOGOS_* sets, `size` px) over whatever is already drawn.
+// x/y is the top left corner.
+static void drawLogo(const Logo *set, int size, int coin, int x, int y)
+{
+    const Logo &logo = set[coin];
+    for (int j = 0; j < size; j++)
     {
-        float x0 = cx - a, y0 = cy + side * a;
-        float x1 = cx,     y1 = cy - side * (a - 2 * gap);
-        float x2 = cx + a, y2 = cy + side * a;
-
-        float px = x0, py = y0;
-        for (int i = 1; i <= steps; i++)
+        for (int i = 0; i < size; i++)
         {
-            float t = (float)i / steps, u = 1 - t;
-            float x = u * u * x0 + 2 * u * t * x1 + t * t * x2;
-            float y = u * u * y0 + 2 * u * t * y1 + t * t * y2;
-            spr.drawWideLine(px, py, x, y, width, color, bg);
-            px = x;
-            py = y;
+            int k = j * size + i;
+            uint8_t alpha = logo.alpha[k];
+            if (alpha == 0)
+                continue;
+            uint16_t color = logo.rgb[k];
+            if (alpha < 255)
+                color = tft.alphaBlend(alpha, color, spr.readPixel(x + i, y + j));
+            spr.drawPixel(x + i, y + j, color);
         }
     }
 }
@@ -155,29 +174,37 @@ static void drawWaiting(const PriceData &d)
     text(buf, SCREEN_WIDTH / 2, 76, 16, COL_MUTED, COL_BG, TA_CENTER);
 }
 
+// Status dot: green = fresh data, amber = stale data, red = no WiFi
+static void drawStatus(bool fresh)
+{
+    uint16_t status = WiFi.status() != WL_CONNECTED ? COL_DOWN : fresh ? COL_UP : COL_WARN;
+    spr.fillSmoothCircle(SCREEN_WIDTH - 10, HEADER_H / 2, 4, status, COL_PANEL);
+}
+
+static void drawHeaderClock(int right)
+{
+    struct tm now;
+    char buf[8] = "--:--";
+    if (localNow(now))
+        strftime(buf, sizeof(buf), "%H:%M", &now);
+    text(buf, right, 4, 15, COL_TEXT, COL_PANEL, TA_RIGHT);
+}
+
 static void drawHeader(const PriceData &d, bool showClock)
 {
     spr.fillRect(0, 0, SCREEN_WIDTH, HEADER_H, COL_PANEL);
-    drawXrpLogo(14, 12, 8, COL_TEXT, COL_PANEL);
+    drawLogo(LOGOS_SMALL, LOGO_SMALL, d.coin, 4, (HEADER_H - LOGO_SMALL) / 2);
 
-    char pair[16];
-    snprintf(pair, sizeof(pair), "XRP / %s", d.currency);
+    char pair[20];
+    snprintf(pair, sizeof(pair), "%s / %s", d.symbol, d.currency);
     text(pair, 30, 4, 15, COL_TEXT, COL_PANEL);
 
-    // Status: green = fresh data, amber = stale data, red = no WiFi
-    uint16_t status = WiFi.status() != WL_CONNECTED                  ? COL_DOWN
-                      : (d.valid && millis() - d.fetchedMs < STALE_MS) ? COL_UP
-                                                                       : COL_WARN;
-    spr.fillSmoothCircle(SCREEN_WIDTH - 10, HEADER_H / 2, 4, status, COL_PANEL);
+    drawStatus(d.valid && millis() - d.fetchedMs < STALE_MS);
 
     const int right = SCREEN_WIDTH - 22;
     if (showClock)
     {
-        struct tm now;
-        char buf[8] = "--:--";
-        if (localNow(now))
-            strftime(buf, sizeof(buf), "%H:%M", &now);
-        text(buf, right, 4, 15, COL_TEXT, COL_PANEL, TA_RIGHT);
+        drawHeaderClock(right);
     }
     else if (d.valid)
     {
@@ -497,6 +524,95 @@ static void screenMarket(const PriceData &d)
     }
 }
 
+// 24h closes plus the latest price, coloured by the trend
+static void drawSparkline(const CoinSummary &coin, int x0, int y0, int x1, int y1)
+{
+    float pts[CHART_MAX_POINTS + 1];
+    int n = coin.chartCount;
+    memcpy(pts, coin.chart, sizeof(float) * n);
+    pts[n++] = coin.price;
+
+    float lo = pts[0], hi = pts[0];
+    for (int i = 1; i < n; i++)
+    {
+        lo = min(lo, pts[i]);
+        hi = max(hi, pts[i]);
+    }
+    if (hi - lo < hi * 1e-6f)
+    {
+        hi += hi * 0.001f;
+        lo -= lo * 0.001f;
+    }
+
+    uint16_t color = pts[n - 1] >= pts[0] ? COL_UP : COL_DOWN;
+    auto X = [&](int i) { return x0 + (float)i * (x1 - x0) / (n - 1); };
+    auto Y = [&](float v) { return y1 - (v - lo) / (hi - lo) * (y1 - y0); };
+    for (int i = 0; i < n - 1; i++)
+        spr.drawWideLine(X(i), Y(pts[i]), X(i + 1), Y(pts[i + 1]), 1.5f, color, COL_BG);
+}
+
+// Main view: one row per coin, while the charts download in the background
+static void screenSummary()
+{
+    Summary s = priceServiceSummary();
+
+    spr.fillRect(0, 0, SCREEN_WIDTH, HEADER_H, COL_PANEL);
+    char buf[48];
+    snprintf(buf, sizeof(buf), "Resumen / %s", s.currency);
+    text(buf, 8, 4, 15, COL_TEXT, COL_PANEL);
+    bool fresh = true;
+    for (int c = 0; c < COIN_COUNT; c++)
+        fresh = fresh && s.coins[c].valid && millis() - s.coins[c].fetchedMs < STALE_MS;
+    drawStatus(fresh);
+    drawHeaderClock(SCREEN_WIDTH - 22);
+
+    const int rowH = 38, top = HEADER_H + 4, right = SCREEN_WIDTH - 8;
+    for (int c = 0; c < COIN_COUNT; c++)
+    {
+        const CoinSummary &coin = s.coins[c];
+        int y = top + c * rowH;
+        if (c > 0)
+            spr.drawFastHLine(8, y - 3, SCREEN_WIDTH - 16, COL_GRID);
+
+        drawLogo(LOGOS_MEDIUM, LOGO_MEDIUM, c, 8, y);
+        text(COINS[c].symbol, 48, y + 1, 17, COL_TEXT, COL_BG);
+        if (!coin.valid)
+        {
+            text("Cargando...", right, y + 9, 13, COL_MUTED, COL_BG, TA_RIGHT);
+            continue;
+        }
+
+        char cap[16];
+        fmtCompact(coin.marketCap, cap, sizeof(cap));
+        snprintf(buf, sizeof(buf), "Cap %s", cap);
+        text(buf, 48, y + 21, 11, COL_MUTED, COL_BG);
+
+        if (coin.chartValid)
+            drawSparkline(coin, 122, y + 4, 196, y + 28);
+
+        fmtPrice(coin.price, buf, sizeof(buf));
+        text(buf, right, y, fitSize(buf, 18, 104), COL_TEXT, COL_BG, TA_RIGHT);
+        drawChange(coin.change24h, right, y + 20, 13, COL_BG, TA_RIGHT);
+    }
+
+    // Footer: background downloads, then a hint
+    const int total = 2 * COIN_COUNT;
+    if (s.waitSec > 0)
+        snprintf(buf, sizeof(buf), "Limite de la API, reintento en %d s", s.waitSec);
+    else if (s.chartsLoaded < total)
+        snprintf(buf, sizeof(buf), "Descargando graficas %d/%d", s.chartsLoaded, total);
+    else
+        snprintf(buf, sizeof(buf), "Doble clic en KEY para ver cada moneda");
+    text(buf, 8, 150, 11, COL_MUTED, COL_BG);
+
+    if (s.chartsLoaded < total)
+    {
+        const int x = 214, y = 154, w = right - x, h = 4;
+        spr.fillSmoothRoundRect(x, y, w, h, h / 2, COL_PANEL, COL_BG);
+        spr.fillSmoothRoundRect(x, y, max(h, w * s.chartsLoaded / total), h, h / 2, COL_UP, COL_BG);
+    }
+}
+
 typedef void (*ScreenFunction)(const PriceData &);
 static const ScreenFunction screens[] = {screenPrice, screenChart, screenCandles, screenMacd, screenClock, screenMarket};
 static const int screenCount = sizeof(screens) / sizeof(screens[0]);
@@ -529,17 +645,54 @@ void displayInit()
 void displayLoadingScreen(const char *status)
 {
     spr.fillSprite(COL_BG);
-    drawXrpLogo(SCREEN_WIDTH / 2, 56, 30, COL_TEXT, COL_BG);
+    drawLogo(LOGOS_LARGE, LOGO_LARGE, 0, (SCREEN_WIDTH - LOGO_LARGE) / 2, 24);
     text(APP_NAME, SCREEN_WIDTH / 2, 96, 26, COL_TEXT, COL_BG, TA_CENTER);
     text(status, SCREEN_WIDTH / 2, 134, 14, COL_MUTED, COL_BG, TA_CENTER);
     text(CURRENT_VERSION, SCREEN_WIDTH - 8, 154, 11, COL_GRID, COL_BG, TA_RIGHT);
     spr.pushSprite(0, 0);
 }
 
+void displayLoadProgress(const LoadProgress &progress)
+{
+    // Eased towards the real progress, so the bar grows smoothly between requests
+    static float shown = 0;
+    static int shownCoin = -1;
+    if (progress.coin != shownCoin)
+    {
+        shown = 0;
+        shownCoin = progress.coin;
+    }
+    shown += ((float)progress.done / progress.total - shown) * 0.15f;
+
+    spr.fillSprite(COL_BG);
+    const char *symbol = COINS[progress.coin].symbol;
+    drawLogo(LOGOS_LARGE, LOGO_LARGE, progress.coin, (SCREEN_WIDTH - LOGO_LARGE) / 2, 14);
+    text(symbol, SCREEN_WIDTH / 2, 84, 22, COL_TEXT, COL_BG, TA_CENTER);
+
+    char buf[40];
+    if (WiFi.status() != WL_CONNECTED)
+        snprintf(buf, sizeof(buf), "Sin conexion WiFi");
+    else if (progress.waitSec > 0)
+        snprintf(buf, sizeof(buf), "Limite de la API, reintento en %d s", progress.waitSec);
+    else if (progress.lastError != 0)
+        snprintf(buf, sizeof(buf), "Error API (%d), reintentando", progress.lastError);
+    else
+        snprintf(buf, sizeof(buf), "Cargando datos de %s...", symbol);
+    text(buf, SCREEN_WIDTH / 2, 114, 13, COL_MUTED, COL_BG, TA_CENTER);
+
+    const int x = 40, y = 138, w = SCREEN_WIDTH - 2 * x, h = 6;
+    spr.fillSmoothRoundRect(x, y, w, h, h / 2, COL_PANEL, COL_BG);
+    spr.fillSmoothRoundRect(x, y, max(h, (int)(w * shown)), h, h / 2, COL_UP, COL_BG);
+
+    snprintf(buf, sizeof(buf), "%d%%", (int)(shown * 100 + 0.5f));
+    text(buf, SCREEN_WIDTH / 2, 150, 11, COL_MUTED, COL_BG, TA_CENTER);
+    spr.pushSprite(0, 0);
+}
+
 void displaySetupScreen(const char *apName, const char *apPassword)
 {
     spr.fillSprite(COL_BG);
-    drawXrpLogo(24, 22, 13, COL_TEXT, COL_BG);
+    drawLogo(LOGOS_SMALL, LOGO_SMALL, 0, 14, 12);
     text("Configuracion", 48, 9, 22, COL_TEXT, COL_BG);
 
     const char *labels[] = {"Red WiFi", "Clave", "Web"};
@@ -557,16 +710,28 @@ void displaySetupScreen(const char *apName, const char *apPassword)
 
 void displayDraw()
 {
-    PriceData data = priceServiceGet();
     spr.fillSprite(COL_BG);
-    screens[s_screen](data);
-    drawPager();
+    if (priceServiceCoin() == SUMMARY)
+    {
+        screenSummary();
+    }
+    else
+    {
+        PriceData data = priceServiceGet();
+        screens[s_screen](data);
+        drawPager();
+    }
     spr.pushSprite(0, 0);
 }
 
 void displayNextScreen()
 {
     s_screen = (s_screen + 1) % screenCount;
+    s_dirty = true;
+}
+
+void displayRefresh()
+{
     s_dirty = true;
 }
 

@@ -9,15 +9,38 @@
 #include "priceService.h"
 #include "display.h"
 
-#define REDRAW_MS SECOND_MS
+#define REDRAW_MS        SECOND_MS
+#define LOAD_FRAME_MS    40                 // Progress bar animation
+#define LOAD_TIMEOUT_MS  (3 * MINUTE_MS)    // Show the screens anyway if some data never arrives
 
 // Button 1 (BOOT): click = screen on/off, double click = rotate 180
-// Button 2 (KEY):  click = next screen, hold 5 s = erase config
+// Button 2 (KEY):  click = next screen, double click = next view (summary, XRP, XLM, VELO), hold 5 s = erase config
 //                  hold while booting = open config portal
 OneButton button1(PIN_BUTTON_1);
 OneButton button2(PIN_BUTTON_2);
 
 static unsigned long lastDraw = 0;
+static bool loading = true;   // Progress screen until the current coin has its data
+static unsigned long loadStart = 0;
+
+static void startLoading()
+{
+    loading = true;
+    loadStart = millis();
+}
+
+static void nextScreen()
+{
+    if (!loading && priceServiceCoin() != SUMMARY)
+        displayNextScreen();
+}
+
+// Also works while loading, e.g. to go back to a coin already loaded while the API is rate limited
+static void nextCoin()
+{
+    priceServiceNextCoin();
+    startLoading(); // Ends right away if the coin already has its data
+}
 
 void setup()
 {
@@ -34,7 +57,8 @@ void setup()
     button1.attachDoubleClick(displayFlipRotation);
 
     button2.setPressMs(5 * SECOND_MS);
-    button2.attachClick(displayNextScreen);
+    button2.attachClick(nextScreen);
+    button2.attachDoubleClick(nextCoin);
     button2.attachLongPressStart(reset_configuration);
 
     displayInit();
@@ -44,8 +68,8 @@ void setup()
 
     configTzTime(Settings.Timezone, "pool.ntp.org", "time.google.com");
 
-    displayLoadingScreen("Obteniendo precio...");
     priceServiceBegin(Settings);
+    startLoading();
 }
 
 void loop()
@@ -55,7 +79,24 @@ void loop()
     wifiManagerProcess();
 
     unsigned long now = millis();
-    if (displayConsumeDirty() || now - lastDraw >= REDRAW_MS)
+    if (loading)
+    {
+        // Only when a coin is shown before its charts finished downloading in the background
+        LoadProgress progress = priceServiceProgress();
+        loading = progress.done < progress.total && now - loadStart < LOAD_TIMEOUT_MS;
+        if (!loading)
+        {
+            Serial.printf("Loading done in %lu ms (%d/%d)\n", now - loadStart, progress.done, progress.total);
+            displayRefresh();
+        }
+        else if (now - lastDraw >= LOAD_FRAME_MS)
+        {
+            displayLoadProgress(progress);
+            lastDraw = now;
+        }
+    }
+
+    if (!loading && (displayConsumeDirty() || now - lastDraw >= REDRAW_MS))
     {
         displayDraw();
         lastDraw = now;
