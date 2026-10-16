@@ -58,7 +58,6 @@ struct CoinSummary
     double marketCap;
     uint32_t fetchedMs;    // millis() of the last successful price fetch
     bool chartValid;       // chart holds the 24h closes
-    bool dailyValid;
     uint8_t chartCount;
     float chart[CHART_MAX_POINTS];
 };
@@ -83,8 +82,8 @@ struct LoadProgress
 // Starts the background task that polls CoinGecko, starting on the summary
 void priceServiceBegin(const TSettings &settings);
 
-// Cycles summary -> XRP -> XLM -> VELO -> summary. The charts of every coin download in the background,
-// a coin shown before that loads them right away.
+// Cycles summary -> XRP -> XLM -> VELO -> summary. The charts of every coin download and refresh in the
+// background, a coin shown before that loads them right away.
 void priceServiceNextCoin();
 
 // Current coin index, or SUMMARY
@@ -98,5 +97,8 @@ LoadProgress priceServiceProgress();
 
 // Thread safe snapshot of the latest data for the current coin
 PriceData priceServiceGet();
+
+// millis() of the last successful request, 0 if none yet
+uint32_t priceServiceLastOkMs();
 
 #endif // PRICE_SERVICE_H

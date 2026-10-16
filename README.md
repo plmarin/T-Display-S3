@@ -8,7 +8,6 @@ No hace falta clave de API ni ningún servidor propio: basta con la placa y un c
 
 Basado en [NerdMiner v2](https://github.com/BitMaker-hub/NerdMiner_v2) (licencia MIT). Se ha eliminado todo lo
 relativo al minado de BTC y se reutiliza el portal WiFi, el guardado de configuración y el manejo de pantalla y botones.
-La caja 3D original de NerdMiner para esta placa sigue en [3d_files](3d_files/).
 
 ## Qué hace
 
@@ -23,6 +22,7 @@ La caja 3D original de NerdMiner para esta placa sigue en [3d_files](3d_files/).
 - **Reloj** sincronizado por NTP, con cambio de horario automático.
 - **Configuración desde el móvil** mediante un portal WiFi propio, sin recompilar.
 - **Indicador de estado** que avisa si los datos están desactualizados o si se ha perdido la conexión.
+- **Reinicio automático** cada día a las 00:00, y también si pasan 30 minutos sin recibir datos.
 
 ## Cómo funciona
 
@@ -114,14 +114,17 @@ criptomonedas son `ripple` (XRP), `stellar` (XLM) y `velo` (VELO); en las rutas 
 
 Al arrancar se piden los precios de las tres criptomonedas en una sola petición, y después, en segundo plano y con
 15 s de separación, las 6 gráficas (24h y diaria de cada una). Si se elige una criptomoneda cuyas gráficas aún no han
-llegado, se piden en ese momento. Una vez descargadas, solo se refrescan las gráficas de la criptomoneda que está en
-pantalla; en el resumen solo se refrescan los precios. Los datos de cada una se guardan en memoria, así que al cambiar
-a una que ya se ha cargado aparece al momento.
+llegado, se piden en ese momento. Después, las gráficas de todas se siguen refrescando: las de la criptomoneda en
+pantalla en cuanto toca, y las demás en segundo plano, también de una en una y con 15 s entre peticiones. Los datos de
+cada una se guardan en memoria, así que al cambiar a una que ya se ha cargado aparece al momento.
 
 Si la API responde `429` (límite de peticiones), se paran todas las peticiones durante el tiempo que indique la
 cabecera `Retry-After` (entre 5 s y 10 min), o 2 minutos si no la envía. La pantalla de carga muestra la cuenta atrás.
 Mientras tanto se puede volver con una pulsación larga de KEY a una criptomoneda ya cargada. Ante cualquier otro error se reintenta
 a los 30 s.
+
+Como red de seguridad, la placa se reinicia (y empieza con la memoria limpia) cada día a las 00:00 hora local, y
+también si pasan 30 minutos sin que ninguna petición tenga éxito, por ejemplo si la WiFi no se recupera.
 
 ## Compilar y flashear
 
@@ -139,7 +142,7 @@ Si no detecta la placa, mantén BOOT pulsado mientras la conectas para entrar en
 
 ```
 src/
-  main.cpp          setup/loop, botones y temporizadores
+  main.cpp          setup/loop, botones, temporizadores y reinicio automático
   wManager.cpp      portal WiFi (WiFiManager) y parámetros
   settings.cpp      carga/guardado de ajustes en SPIFFS
   priceService.cpp  tarea en segundo plano que consulta CoinGecko
@@ -148,7 +151,6 @@ src/
   media/logos.h     logos de XRP, XLM y VELO (generado por tools/make_logos.py)
 tools/make_logos.py descarga los logos de CoinGecko y genera media/logos.h (necesita Pillow)
 platformio.ini      dependencias y configuración de TFT_eSPI para la T-Display S3 (pines, driver)
-3d_files/           caja imprimible en 3D (de NerdMiner)
 ```
 
 ## Dependencias

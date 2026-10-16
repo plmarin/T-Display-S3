@@ -14,6 +14,9 @@
 #define LOAD_TIMEOUT_MS  (3 * MINUTE_MS)    // Show the screens anyway if some data never arrives
 #define COIN_PRESS_MS    800                // KEY long press that switches the view
 #define RESET_PRESS_MS   (5 * SECOND_MS)    // KEY long press that erases the config
+#define HOUR_MS          (60 * MINUTE_MS)
+#define MIN_UPTIME_MS    HOUR_MS            // So the restart at midnight does not repeat itself in the same minute
+#define NO_DATA_MS       (30 * MINUTE_MS)   // Restart if no request succeeds for this long
 
 // Button 1 (BOOT): click = screen on/off, double click = rotate 180
 // Button 2 (KEY):  click = next screen, hold ~1 s and release = next view (summary, XRP, XLM, VELO),
@@ -24,6 +27,7 @@ OneButton button2(PIN_BUTTON_2);
 static unsigned long lastDraw = 0;
 static bool loading = true;   // Progress screen until the current coin has its data
 static unsigned long loadStart = 0;
+static unsigned long startMs = 0;      // millis() when the price service started
 
 static void startLoading()
 {
@@ -88,7 +92,31 @@ void setup()
     configTzTime(Settings.Timezone, "pool.ntp.org", "time.google.com");
 
     priceServiceBegin(Settings);
+    startMs = millis();
     startLoading();
+}
+
+static void restart(const char *reason)
+{
+    Serial.printf("Restarting: %s\n", reason);
+    displayLoadingScreen("Reiniciando...");
+    delay(SECOND_MS);
+    ESP.restart();
+}
+
+// Safety net in case the downloads get stuck (TLS, heap, WiFi...): starts over with everything cleared
+static void checkRestart(unsigned long now)
+{
+    // Preventive restart every day at 00:00 local time (once the clock is synced over NTP)
+    time_t t = time(nullptr);
+    struct tm local;
+    localtime_r(&t, &local);
+    if (now >= MIN_UPTIME_MS && local.tm_year > 100 && local.tm_hour == 0 && local.tm_min == 0)
+        restart("daily at 00:00");
+
+    uint32_t lastOk = priceServiceLastOkMs();
+    if (now - (lastOk ? lastOk : startMs) >= NO_DATA_MS)
+        restart("no data for 30 min");
 }
 
 void loop()
@@ -98,6 +126,7 @@ void loop()
     wifiManagerProcess();
 
     unsigned long now = millis();
+    checkRestart(now);
     if (loading)
     {
         // Only when a coin is shown before its charts finished downloading in the background

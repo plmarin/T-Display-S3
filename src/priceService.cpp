@@ -56,6 +56,7 @@ static uint32_t s_retryAfterMs = 0;    // Wait asked by the last 429 (Retry-Afte
 static volatile int s_coin = SUMMARY;
 static String s_vs;
 static uint32_t s_refreshMs;
+static volatile uint32_t s_lastOkMs = 0; // millis() of the last successful request of any kind
 
 static bool due(const Timer &timer)
 {
@@ -299,7 +300,10 @@ static int fetchDaily(int c)
 static uint32_t nextDelay(int c, int code, uint32_t okDelay)
 {
     if (code == HTTP_CODE_OK)
+    {
+        s_lastOkMs = millis();
         return okDelay;
+    }
     Serial.printf("Price: %s request failed (%d)\n", c == ALL_COINS ? "prices" : COINS[c].symbol, code);
     setError(c, code);
     if (code == HTTP_CODE_TOO_MANY_REQUESTS)
@@ -322,7 +326,7 @@ static bool poll(int c, Timer &timer, int (*fetch)(int), uint32_t okDelay)
     return true;
 }
 
-// Downloads one missing chart of a coin not on screen; returns false if nothing was due
+// Downloads one missing or outdated chart of a coin not on screen; returns false if nothing was due
 static bool backgroundStep(int current)
 {
     for (int c = 0; c < COIN_COUNT; c++)
@@ -330,12 +334,12 @@ static bool backgroundStep(int current)
         if (c == current)
             continue;
         CoinTimers &timers = s_timers[c];
-        if (!s_data[c].chartValid && due(timers.chart))
+        if (due(timers.chart))
         {
             poll(c, timers.chart, fetchChart, CHART_REFRESH_MS);
             return true;
         }
-        if (!s_data[c].dailyValid && due(timers.daily))
+        if (due(timers.daily))
         {
             poll(c, timers.daily, fetchDaily, DAILY_REFRESH_MS);
             return true;
@@ -351,7 +355,7 @@ static void priceTask(void *)
         if (WiFi.status() == WL_CONNECTED)
         {
             // Prices of every coin in one request, then the charts of the coin on screen (if any),
-            // then, one at a time and spaced out, the charts the other coins are still missing
+            // then, one at a time and spaced out, the charts the other coins are missing or have outdated
             int c = s_coin;
             bool ok = poll(ALL_COINS, s_priceTimer, fetchPrices, s_refreshMs);
             if (ok && c != SUMMARY)
@@ -440,7 +444,6 @@ Summary priceServiceSummary()
         coin.marketCap = d.marketCap;
         coin.fetchedMs = d.fetchedMs;
         coin.chartValid = d.chartValid;
-        coin.dailyValid = d.dailyValid;
         coin.chartCount = d.chartCount;
         memcpy(coin.chart, d.chart, sizeof(coin.chart));
         summary.chartsLoaded += d.chartValid + d.dailyValid;
@@ -459,4 +462,9 @@ PriceData priceServiceGet()
     copy = s_data[c == SUMMARY ? 0 : c];
     xSemaphoreGive(s_mutex);
     return copy;
+}
+
+uint32_t priceServiceLastOkMs()
+{
+    return s_lastOkMs;
 }
